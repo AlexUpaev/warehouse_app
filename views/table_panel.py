@@ -2,9 +2,10 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTableView, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox
+    QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
+    QScrollArea
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
 from datetime import date, datetime
 from database import Database
@@ -100,36 +101,27 @@ class InputForm(QDialog):
 class SortableHeaderView(QHeaderView):
     """Заголовок таблицы с сортировкой при клике."""
     
-    # Сигнал для передачи информации о сортировке
-    sortRequested = Signal(int, bool)  # column_index, ascending
+    sortRequested = Signal(int, bool)
     
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
-        self.sort_column = -1  # -1 = нет сортировки
-        self.sort_ascending = True  # True = по возрастанию, False = по убыванию
+        self.sort_column = -1
+        self.sort_ascending = True
         self.setSectionsClickable(True)
         self.sectionClicked.connect(self.on_section_clicked)
         self.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     
     def on_section_clicked(self, logical_index):
-        """Обработка клика по заголовку столбца."""
-        # БЛОКИРОВКА СОРТИРОВКИ ПО ID (первый столбец)
         if logical_index == 0:
             return
         
-        # Определяем новое состояние сортировки
         if self.sort_column == logical_index:
-            # Если кликнули на тот же столбец - переключаем направление
             self.sort_ascending = not self.sort_ascending
         else:
-            # Новый столбец - начинаем с возрастания
             self.sort_column = logical_index
             self.sort_ascending = True
         
-        # Отправляем сигнал о необходимости сортировки
         self.sortRequested.emit(logical_index, self.sort_ascending)
-        
-        # Обновляем заголовок
         self.viewport().update()
 
 
@@ -144,7 +136,6 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
     
     def filterAcceptsRow(self, source_row, source_parent):
-        # ЕСЛИ ПОИСК ПУСТОЙ - ВОЗВРАЩАЕМ TRUE ДЛЯ ВСЕХ СТРОК
         if not self.search_text:
             return True
         
@@ -162,12 +153,114 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
         return False
 
 
+class SideMenu(QWidget):
+    """Боковое меню с плавной анимацией."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(280)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1A529C;
+                color: white;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Заголовок меню
+        header = QWidget()
+        header.setFixedHeight(80)
+        header.setStyleSheet("background-color: #0d47a1;")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(20, 20, 20, 20)
+        
+        menu_title = QLabel("Меню")
+        menu_title.setFont(QFont('Segoe UI', 18, QFont.Weight.Bold))
+        header_layout.addWidget(menu_title)
+        
+        layout.addWidget(header)
+        
+        # Прокрутка для пунктов меню
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("border: none; background-color: transparent;")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background-color: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(2)
+        
+        # ПУНКТЫ МЕНЮ (заглушки)
+        menu_items = [
+            ("👤 Личный кабинет", self.open_profile),
+            ("📥 Приход/расход материала", self.open_materials_flow),
+            ("📊 Отчёты по стройкам", self.open_reports),
+        ]
+        
+        for icon_text, callback in menu_items:
+            btn = self.create_menu_button(icon_text, callback)
+            scroll_layout.addWidget(btn)
+        
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+    
+    def create_menu_button(self, text, callback):
+        """Создаёт кнопку меню."""
+        btn = QPushButton(text)
+        btn.setFixedHeight(55)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: white;
+                text-align: left;
+                padding-left: 30px;
+                font-size: 14px;
+                font-weight: 500;
+                border: none;
+                border-left: 4px solid transparent;
+            }
+            QPushButton:hover {
+                background-color: #1565C0;
+                border-left: 4px solid #64B5F6;
+            }
+            QPushButton:pressed {
+                background-color: #0d47a1;
+            }
+        """)
+        btn.clicked.connect(callback)
+        return btn
+    
+    # ЗАГЛУШКИ ДЛЯ СТРАНИЦ
+    def open_profile(self):
+        QMessageBox.information(self, "Личный кабинет", 
+            "Страница находится в разработке\n\nЗдесь будет:\n- Информация о пользователе\n- Настройки профиля\n- Смена пароля")
+    
+    def open_materials_flow(self):
+        QMessageBox.information(self, "Приход/расход материала", 
+            "Страница находится в разработке\n\nЗдесь будет:\n- Оформление прихода материалов\n- Оформление расхода\n- История операций")
+    
+    def open_reports(self):
+        QMessageBox.information(self, "Отчёты по стройкам", 
+            "Страница находится в разработке\n\nЗдесь будет:\n- Отчёты по объектам\n- Статистика использования\n- Экспорт данных")
+
+
 class TablePanel(QMainWindow):
     def __init__(self, user_data):
         super().__init__()
         self.user_data = user_data
         self.db = Database()
         self.current_table_name = None
+        self.menu_opened = False
         self.init_ui()
 
     def init_ui(self):
@@ -180,15 +273,42 @@ class TablePanel(QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Контейнер для основного контента
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
 
         # Верхняя панель
         top_panel = QWidget()
         top_panel.setFixedHeight(60)
         top_panel.setStyleSheet("background-color: #F0F8FF; border-bottom: 2px solid #1A529C;")
         top_layout = QHBoxLayout(top_panel)
-        top_layout.setContentsMargins(20, 0, 20, 0)
+        top_layout.setContentsMargins(10, 0, 20, 0)
+
+        # КНОПКА-ГАМБУРГЕР
+        self.menu_button = QPushButton("☰")
+        self.menu_button.setFixedSize(40, 40)
+        self.menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menu_button.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #1A529C;
+                border: none;
+                border-radius: 4px;
+                font-size: 24px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #E3F2FD;
+                color: #0d47a1;
+            }
+        """)
+        self.menu_button.clicked.connect(self.toggle_menu)
+        top_layout.addWidget(self.menu_button)
 
         user_label = QLabel(f"Пользователь: {self.user_data['full_name']} ({self.user_data['role']})")
         user_label.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
@@ -243,7 +363,7 @@ class TablePanel(QMainWindow):
 
         top_layout.addWidget(buttons_container)
         top_layout.addStretch()
-        main_layout.addWidget(top_panel)
+        self.content_layout.addWidget(top_panel)
 
         # Таблица данных
         self.data_table = QTableView()
@@ -254,8 +374,6 @@ class TablePanel(QMainWindow):
         
         header = SortableHeaderView(Qt.Horizontal, self.data_table)
         self.data_table.setHorizontalHeader(header)
-        
-        # ✅ ПОДКЛЮЧАЕМ СИГНАЛ СОРТИРОВКИ
         header.sortRequested.connect(self.sort_by_column)
         
         self.data_table.setStyleSheet("""
@@ -281,9 +399,9 @@ class TablePanel(QMainWindow):
                 background-color: #003366;
             }
         """)
-        main_layout.addWidget(self.data_table)
+        self.content_layout.addWidget(self.data_table, 1)
 
-        # Прокси-модель для фильтрации и сортировки
+        # Прокси-модель
         self.proxy_model = CustomFilterProxyModel()
         self.proxy_model.setSourceModel(None)
         self.proxy_model.setFilterKeyColumn(-1)
@@ -295,13 +413,76 @@ class TablePanel(QMainWindow):
         bottom_panel.setFixedHeight(40)
         bottom_panel.setStyleSheet("background-color: #F5F5F5; border-top: 1px solid #E0E0E0;")
         bottom_layout = QHBoxLayout(bottom_panel)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setContentsMargins(15, 0, 15, 0)
         version_label = QLabel("Склад материалов v1.0 | PUTEVI")
         bottom_layout.addWidget(version_label)
         bottom_layout.addStretch()
-        main_layout.addWidget(bottom_panel)
+        self.content_layout.addWidget(bottom_panel)
+
+        main_layout.addWidget(self.content_widget)
+
+        # БОКОВОЕ МЕНЮ (поверх всего)
+        self.side_menu = SideMenu(self)
+        self.side_menu.setGeometry(0, 0, 280, self.height())
+        self.side_menu.raise_()
+        self.side_menu.hide()
+        
+        # Оверлей
+        self.overlay = QWidget(self)
+        self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 0.4);")
+        self.overlay.setGeometry(0, 0, self.width(), self.height())
+        self.overlay.raise_()
+        self.overlay.hide()
+        self.overlay.mousePressEvent = lambda e: self.toggle_menu()
 
         self.load_table("Пользователи")
+
+    def resizeEvent(self, event):
+        """Обработка изменения размера окна."""
+        super().resizeEvent(event)
+        if hasattr(self, 'side_menu'):
+            self.side_menu.setGeometry(0, 0, 280, self.height())
+        if hasattr(self, 'overlay'):
+            self.overlay.setGeometry(0, 0, self.width(), self.height())
+
+    def toggle_menu(self):
+        """Переключает состояние меню."""
+        if self.menu_opened:
+            self.close_menu()
+        else:
+            self.open_menu()
+
+    def open_menu(self):
+        """Открывает меню."""
+        self.side_menu.show()
+        self.side_menu.raise_()
+        self.overlay.show()
+        self.overlay.raise_()
+        self.menu_opened = True
+        
+        # Анимация появления
+        self.menu_animation = QPropertyAnimation(self.side_menu, b"pos")
+        self.menu_animation.setDuration(300)
+        self.menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
+        self.menu_animation.setStartValue(QPoint(-280, 0))
+        self.menu_animation.setEndValue(QPoint(0, 0))
+        self.menu_animation.start()
+
+    def close_menu(self):
+        """Закрывает меню."""
+        self.menu_animation = QPropertyAnimation(self.side_menu, b"pos")
+        self.menu_animation.setDuration(300)
+        self.menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
+        self.menu_animation.setStartValue(QPoint(0, 0))
+        self.menu_animation.setEndValue(QPoint(-280, 0))
+        self.menu_animation.finished.connect(self.on_menu_closed)
+        self.menu_animation.start()
+
+    def on_menu_closed(self):
+        """Вызывается после закрытия меню."""
+        self.side_menu.hide()
+        self.overlay.hide()
+        self.menu_opened = False
 
     def perform_search(self):
         text = self.search_bar.text()
@@ -314,39 +495,25 @@ class TablePanel(QMainWindow):
         self.main_window.show()
 
     def sort_by_column(self, logical_index, ascending):
-        """
-        СОРТИРОВКА по столбцу с учётом типа данных.
-        ascending: True = по возрастанию, False = по убыванию
-        """
         table_name = TABLES[self.table_selector.currentText()]
-        
-        # Определяем тип данных столбца
         is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
         is_date = logical_index in DATE_COLUMNS.get(table_name, [])
-        
-        # Устанавливаем порядок сортировки
         sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
         
-        # Устанавливаем роль для сортировки
-        if is_numeric:
-            self.proxy_model.setSortRole(Qt.DisplayRole)
-        elif is_date:
+        if is_numeric or is_date:
             self.proxy_model.setSortRole(Qt.DisplayRole)
         else:
-            # Для текста - регистронезависимая сортировка
             self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
             self.proxy_model.setSortRole(Qt.DisplayRole)
         
         self.proxy_model.sort(logical_index, sort_order)
         
-        # Обновляем состояние в header
         if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
             header = self.data_table.horizontalHeader()
             header.sort_column = logical_index
             header.sort_ascending = ascending
 
     def reset_sort(self):
-        """Сбрасывает сортировку к исходному порядку."""
         self.proxy_model.sort(-1, Qt.AscendingOrder)
 
     def open_add_form(self):
@@ -415,12 +582,10 @@ class TablePanel(QMainWindow):
                     item = QStandardItem(text)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
-                    # Для числовых значений - устанавливаем роль для правильной сортировки
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         item.setData(value, Qt.DisplayRole)
                         item.setData(value, Qt.EditRole)
-                    # Для дат - сохраняем оригинальное значение для сортировки
                     elif isinstance(value, (date, datetime)):
                         item.setData(value.isoformat(), Qt.DisplayRole)
                         item.setData(value, Qt.UserRole)
@@ -438,12 +603,10 @@ class TablePanel(QMainWindow):
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
             
-            # Сброс состояния сортировки при смене таблицы
             if isinstance(header, SortableHeaderView):
                 header.sort_column = -1
                 header.sort_ascending = True
             
-            # Сброс поиска
             self.search_bar.clear()
             self.proxy_model.set_search_text("")
             self.reset_sort()
