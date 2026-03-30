@@ -4,8 +4,9 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+from datetime import date, datetime
 from database import Database
 
 # Глобальные переменные и структуры
@@ -36,6 +37,7 @@ HEADERS = {
     ]
 }
 
+# Столбцы с числовыми данными (для правильной сортировки)
 NUMERIC_COLUMNS = {
     "users": [0],
     "categories": [0],
@@ -43,6 +45,16 @@ NUMERIC_COLUMNS = {
     "materials": [0, 2, 4, 5],
     "transactions": [0, 3],
     "material_history": [0, 2, 3, 4]
+}
+
+# Столбцы с датами
+DATE_COLUMNS = {
+    "users": [6, 7],
+    "categories": [3],
+    "suppliers": [6],
+    "materials": [10, 11],
+    "transactions": [6, 8],
+    "material_history": [8]
 }
 
 MAX_CELL_LENGTH = 60
@@ -86,48 +98,39 @@ class InputForm(QDialog):
 
 
 class SortableHeaderView(QHeaderView):
+    """Заголовок таблицы с сортировкой при клике."""
+    
+    # Сигнал для передачи информации о сортировке
+    sortRequested = Signal(int, bool)  # column_index, ascending
+    
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
-        self.sort_indicator_section = -1
-        self.sort_order = Qt.AscendingOrder
+        self.sort_column = -1  # -1 = нет сортировки
+        self.sort_ascending = True  # True = по возрастанию, False = по убыванию
         self.setSectionsClickable(True)
         self.sectionClicked.connect(self.on_section_clicked)
+        self.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     
     def on_section_clicked(self, logical_index):
-        if self.sort_indicator_section == logical_index:
-            self.sort_order = Qt.DescendingOrder if self.sort_order == Qt.AscendingOrder else Qt.AscendingOrder
-        else:
-            self.sort_indicator_section = logical_index
-            self.sort_order = Qt.AscendingOrder
+        """Обработка клика по заголовку столбца."""
+        # БЛОКИРОВКА СОРТИРОВКИ ПО ID (первый столбец)
+        if logical_index == 0:
+            return
         
+        # Определяем новое состояние сортировки
+        if self.sort_column == logical_index:
+            # Если кликнули на тот же столбец - переключаем направление
+            self.sort_ascending = not self.sort_ascending
+        else:
+            # Новый столбец - начинаем с возрастания
+            self.sort_column = logical_index
+            self.sort_ascending = True
+        
+        # Отправляем сигнал о необходимости сортировки
+        self.sortRequested.emit(logical_index, self.sort_ascending)
+        
+        # Обновляем заголовок
         self.viewport().update()
-        self.parent().sort_by_column(logical_index, self.sort_order)
-    
-    def paintSection(self, painter, rect, logical_index):
-        super().paintSection(painter, rect, logical_index)
-        if self.sort_indicator_section == logical_index:
-            painter.save()
-            arrow_size = 8
-            padding = 10
-            if self.sort_order == Qt.AscendingOrder:
-                points = [
-                    (rect.right() - padding, rect.center().y() - arrow_size),
-                    (rect.right() - padding + arrow_size, rect.center().y()),
-                    (rect.right() - padding - arrow_size, rect.center().y())
-                ]
-            else:
-                points = [
-                    (rect.right() - padding, rect.center().y() + arrow_size),
-                    (rect.right() - padding + arrow_size, rect.center().y()),
-                    (rect.right() - padding - arrow_size, rect.center().y())
-                ]
-            from PySide6.QtGui import QPolygon, QPen, QBrush
-            from PySide6.QtCore import QPoint
-            polygon = QPolygon([QPoint(x, y) for x, y in points])
-            painter.setPen(QPen(Qt.white, 2))
-            painter.setBrush(QBrush(Qt.white))
-            painter.drawPolygon(polygon)
-            painter.restore()
 
 
 class CustomFilterProxyModel(QSortFilterProxyModel):
@@ -137,12 +140,11 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
         self.search_text = ""
     
     def set_search_text(self, text):
-        # ✅ ИСПРАВЛЕНИЕ: Если текст пустой - сбрасываем фильтр (показываем всё)
         self.search_text = text.strip().lower()
         self.invalidateFilter()
     
     def filterAcceptsRow(self, source_row, source_parent):
-        # ✅ ЕСЛИ ПОИСК ПУСТОЙ - ВОЗВРАЩАЕМ TRUE ДЛЯ ВСЕХ СТРОК
+        # ЕСЛИ ПОИСК ПУСТОЙ - ВОЗВРАЩАЕМ TRUE ДЛЯ ВСЕХ СТРОК
         if not self.search_text:
             return True
         
@@ -154,7 +156,6 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
             index = source_model.index(source_row, column, source_parent)
             cell_value = str(source_model.data(index, Qt.DisplayRole) or "").lower()
             
-            # Полное совпадение
             if cell_value == self.search_text:
                 return True
         
@@ -204,7 +205,6 @@ class TablePanel(QMainWindow):
         self.table_selector.currentTextChanged.connect(self.load_table)
         buttons_layout.addWidget(self.table_selector)
 
-        # Кнопки управления
         add_button = QPushButton("Добавить")
         add_button.setFixedSize(100, 32)
         add_button.setStyleSheet("QPushButton { background-color: #007BFF; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #0056B3; }")
@@ -223,7 +223,6 @@ class TablePanel(QMainWindow):
         delete_button.clicked.connect(self.delete_selected_row)
         buttons_layout.addWidget(delete_button)
 
-        # ПОИСК: Поле + Кнопка
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Поиск (полное совпадение)...")
         self.search_bar.setFixedWidth(200)
@@ -236,7 +235,6 @@ class TablePanel(QMainWindow):
         self.search_bar.returnPressed.connect(self.perform_search)
         buttons_layout.addWidget(self.search_button)
 
-        # ✅ КНОПКА ВЫЙТИ
         logout_button = QPushButton("Выйти")
         logout_button.setFixedSize(80, 32)
         logout_button.setStyleSheet("QPushButton { background-color: #6C757D; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #5A6268; }")
@@ -257,17 +255,40 @@ class TablePanel(QMainWindow):
         header = SortableHeaderView(Qt.Horizontal, self.data_table)
         self.data_table.setHorizontalHeader(header)
         
+        # ✅ ПОДКЛЮЧАЕМ СИГНАЛ СОРТИРОВКИ
+        header.sortRequested.connect(self.sort_by_column)
+        
         self.data_table.setStyleSheet("""
-            QTableView { background-color: white; color: black; font-size: 12px; alternate-background-color: #fafafa; }
-            QHeaderView::section { background-color: #004085; color: white; font-weight: bold; font-size: 14px; padding: 6px; border: none; }
-            QHeaderView::section:hover { background-color: #0056B3; }
+            QTableView { 
+                background-color: white; 
+                color: black; 
+                font-size: 12px; 
+                alternate-background-color: #fafafa; 
+            }
+            QHeaderView::section { 
+                background-color: #004085; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 14px; 
+                padding: 6px; 
+                border: none;
+            }
+            QHeaderView::section:hover { 
+                background-color: #0056B3;
+                cursor: pointer;
+            }
+            QHeaderView::section:pressed { 
+                background-color: #003366;
+            }
         """)
         main_layout.addWidget(self.data_table)
 
-        # Прокси-модель для фильтрации
+        # Прокси-модель для фильтрации и сортировки
         self.proxy_model = CustomFilterProxyModel()
         self.proxy_model.setSourceModel(None)
         self.proxy_model.setFilterKeyColumn(-1)
+        self.proxy_model.setDynamicSortFilter(False)
+        self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
 
         # Нижняя панель
         bottom_panel = QWidget()
@@ -283,17 +304,50 @@ class TablePanel(QMainWindow):
         self.load_table("Пользователи")
 
     def perform_search(self):
-        """Вызывается при нажатии Enter или кнопки Поиск"""
         text = self.search_bar.text()
         self.proxy_model.set_search_text(text)
 
     def logout(self):
-        """Выход из системы и возврат к окну авторизации"""
         self.close()
-        # ✅ ИСПРАВЛЕНИЕ: Относительный импорт (точка в начале) для пакета views
         from .main_window import MainWindow
         self.main_window = MainWindow()
         self.main_window.show()
+
+    def sort_by_column(self, logical_index, ascending):
+        """
+        СОРТИРОВКА по столбцу с учётом типа данных.
+        ascending: True = по возрастанию, False = по убыванию
+        """
+        table_name = TABLES[self.table_selector.currentText()]
+        
+        # Определяем тип данных столбца
+        is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
+        is_date = logical_index in DATE_COLUMNS.get(table_name, [])
+        
+        # Устанавливаем порядок сортировки
+        sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
+        
+        # Устанавливаем роль для сортировки
+        if is_numeric:
+            self.proxy_model.setSortRole(Qt.DisplayRole)
+        elif is_date:
+            self.proxy_model.setSortRole(Qt.DisplayRole)
+        else:
+            # Для текста - регистронезависимая сортировка
+            self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
+            self.proxy_model.setSortRole(Qt.DisplayRole)
+        
+        self.proxy_model.sort(logical_index, sort_order)
+        
+        # Обновляем состояние в header
+        if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
+            header = self.data_table.horizontalHeader()
+            header.sort_column = logical_index
+            header.sort_ascending = ascending
+
+    def reset_sort(self):
+        """Сбрасывает сортировку к исходному порядку."""
+        self.proxy_model.sort(-1, Qt.AscendingOrder)
 
     def open_add_form(self):
         selected_table = TABLES[self.table_selector.currentText()]
@@ -338,20 +392,6 @@ class TablePanel(QMainWindow):
         else:
             QMessageBox.information(self, "Внимание", "Выберите запись для удаления.")
 
-    def sort_by_column(self, logical_index, sort_order):
-        table_name = TABLES[self.table_selector.currentText()]
-        is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
-        
-        if is_numeric:
-            self.proxy_model.setSortKey(logical_index)
-            self.proxy_model.setSortOrder(sort_order)
-            self.proxy_model.setSortRole(Qt.DisplayRole)
-        else:
-            self.proxy_model.setSortKey(logical_index)
-            self.proxy_model.setSortOrder(sort_order)
-        
-        self.proxy_model.sort(logical_index, sort_order)
-
     def reload_current_table(self):
         self.load_table(self.table_selector.currentText())
 
@@ -375,11 +415,18 @@ class TablePanel(QMainWindow):
                     item = QStandardItem(text)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
+                    # Для числовых значений - устанавливаем роль для правильной сортировки
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         item.setData(value, Qt.DisplayRole)
+                        item.setData(value, Qt.EditRole)
+                    # Для дат - сохраняем оригинальное значение для сортировки
+                    elif isinstance(value, (date, datetime)):
+                        item.setData(value.isoformat(), Qt.DisplayRole)
+                        item.setData(value, Qt.UserRole)
                     else:
                         item.setData(text, Qt.DisplayRole)
+                        item.setData(text, Qt.EditRole)
 
                     model.setItem(row_idx, col_idx, item)
 
@@ -391,12 +438,15 @@ class TablePanel(QMainWindow):
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
             
+            # Сброс состояния сортировки при смене таблицы
             if isinstance(header, SortableHeaderView):
-                header.sort_indicator_section = -1
+                header.sort_column = -1
+                header.sort_ascending = True
             
-            # Сброс поиска при смене таблицы
+            # Сброс поиска
             self.search_bar.clear()
             self.proxy_model.set_search_text("")
+            self.reset_sort()
 
         except Exception as e:
             print(f"Ошибка при загрузке таблицы '{table_name}': {e}")
