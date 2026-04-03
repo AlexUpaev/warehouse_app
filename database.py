@@ -64,10 +64,6 @@ class Database:
             if conn: conn.close()
 
     def get_foreign_key_dependencies(self, table_name: str, record_id: int):
-        """
-        🔍 Находит все таблицы, которые ссылаются на удаляемую запись через внешний ключ.
-        Возвращает словарь: {имя_таблицы_на_русском: количество_записей}
-        """
         dependencies = {}
         conn = None
         cursor = None
@@ -75,7 +71,6 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Запрос к information_schema для поиска внешних ключей, ссылающихся на нашу таблицу
             query = """
                 SELECT 
                     tc.table_name AS referencing_table,
@@ -101,11 +96,9 @@ class Database:
                 fk_table = fk_row[0]
                 fk_column = fk_row[1]
                 
-                # Пропускаем самопересечения
                 if fk_table == table_name:
                     continue
                     
-                # Считаем, сколько записей ссылается на удаляемый ID
                 check_query = f"SELECT COUNT(*) FROM {fk_table} WHERE {fk_column} = %s"
                 cursor.execute(check_query, (record_id,))
                 count = cursor.fetchone()[0]
@@ -133,10 +126,6 @@ class Database:
             if conn: conn.close()
 
     def cascade_delete(self, table_name: str, record_id: int):
-        """
-        🗑️ Каскадное удаление: сначала удаляем зависимые записи, затем основную.
-        Возвращает словарь с количеством удалённых записей по таблицам.
-        """
         deleted_counts = {}
         conn = None
         cursor = None
@@ -144,7 +133,6 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Получаем список зависимых таблиц
             query = """
                 SELECT 
                     tc.table_name AS referencing_table,
@@ -166,7 +154,6 @@ class Database:
             cursor.execute(query, (table_name,))
             foreign_keys = cursor.fetchall()
             
-            # Удаляем записи из зависимых таблиц
             for fk_row in foreign_keys:
                 fk_table = fk_row[0]
                 fk_column = fk_row[1]
@@ -189,7 +176,6 @@ class Database:
                     table_name_ru = table_names_ru.get(fk_table, fk_table)
                     deleted_counts[table_name_ru] = cursor.rowcount
             
-            # Удаляем основную запись
             cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", (record_id,))
             table_names_ru_singular = {
                 'users': 'Пользователь',
@@ -256,7 +242,6 @@ class Database:
             if conn: conn.close()
 
     def delete_record(self, table_name: str, record_id: int):
-        """Простое удаление без каскада (для случаев, когда зависимостей нет)"""
         sql_query = f"DELETE FROM {table_name} WHERE id=%s"
         conn = None
         cursor = None

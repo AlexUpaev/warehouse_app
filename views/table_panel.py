@@ -3,9 +3,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTableView, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QScrollArea
+    QScrollArea, QStyledItemDelegate, QDateEdit, QDateTimeEdit
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal, QPropertyAnimation, QEasingCurve, QModelIndex, QDate, QDateTime
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
 from datetime import date, datetime
 from database import Database
@@ -64,11 +64,59 @@ class InputForm(QDialog):
             raise TypeError("Неподдерживаемый тип аргумента.")
 
         self.input_fields = {}
+        placeholders = {
+            "Логин": "Например: user123",
+            "Пароль": "Минимум 6 символов",
+            "ФИО": "Иванов Иван Иванович",
+            "Email": "user@example.com",
+            "Роль": "admin, manager или user",
+            "Наименование": "Например: Саморез по дереву 4.2x75",
+            "Количество": "Число, например: 100",
+            "Ед.": "шт, кг, м, мешок и т.д.",
+            "Цена (₽)": "Например: 1.50 или 1500",
+            "Мин. запас": "Например: 50",
+            "Поставщик": "ООО \"Название\"",
+            "Описание": "Краткое описание товара",
+            "Категория": "ID категории или название",
+            "Название": "Например: Крепежные изделия",
+            "Описание": "Описание категории",
+            "Телефон": "+7 (999) 123-45-67",
+            "Адрес": "г. Москва, ул. Примерная, д. 1",
+            "Контактное лицо": "Иванов Иван",
+            "Документ": "ПРИХ-001/2025",
+            "Дата документа": "дд.мм.гггг",
+            "Примечание": "Дополнительная информация",
+            "Тип": "incoming, outgoing, adjustment",
+            "Пользователь": "ID или ФИО пользователя",
+            "Материал": "ID или название материала",
+            "Действие": "add, remove, adjust, create, update",
+            "Было": "Предыдущее количество",
+            "Стало": "Новое количество",
+            "Разница": "Разница (Стало - Было)",
+            "Время": "дд.мм.гггг чч:мм",
+            "Создан": "дд.мм.гггг чч:мм",
+            "Обновлен": "дд.мм.гггг чч:мм",
+            "Последний вход": "дд.мм.гггг чч:мм",
+            "Активен": "True или False",
+            "Создал": "ID пользователя",
+            "Изменил": "ID пользователя"
+        }
+
         for i, field in enumerate(fields):
             label = QLabel(field)
             input_field = QLineEdit()
+            
+            if field in placeholders:
+                input_field.setPlaceholderText(placeholders[field])
+            
             if values:
-                input_field.setText(str(values[field]))
+                value = values[field]
+                if value is not None:
+                    if isinstance(value, (date, datetime)):
+                        input_field.setText(value.strftime("%d.%m.%Y %H:%M"))
+                    else:
+                        input_field.setText(str(value))
+            
             self.input_fields[field] = input_field
             form_layout.addRow(label, input_field)
 
@@ -78,11 +126,7 @@ class InputForm(QDialog):
         form_layout.addRow(button_box)
 
     def validate_and_submit(self):
-        valid = all(self.input_fields[field].text() != '' for field in self.input_fields)
-        if valid:
-            self.accept()
-        else:
-            QMessageBox.warning(self, "Ошибка", "Необходимо заполнить все поля.")
+        self.accept()
 
 class SortableHeaderView(QHeaderView):
     sortRequested = Signal(int, bool)
@@ -118,8 +162,40 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
         for column in range(source_model.columnCount()):
             index = source_model.index(source_row, column, source_parent)
             cell_value = str(source_model.data(index, Qt.DisplayRole) or "").lower()
-            if cell_value == self.search_text: return True
+            if self.search_text in cell_value: return True
         return False
+
+class EditableItemDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None, table_panel=None):
+        super().__init__(parent)
+        self.table_panel = table_panel
+        self.original_data = None
+        
+    def setEditorData(self, editor, index):
+        value = index.model().data(index, Qt.EditRole)
+        if isinstance(editor, QLineEdit):
+            editor.setText(str(value) if value is not None else "")
+            
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QLineEdit):
+            new_value = editor.text()
+            old_value = model.data(index, Qt.DisplayRole)
+            
+            if str(new_value) != str(old_value):
+                reply = QMessageBox.question(
+                    self.table_panel,
+                    "Подтверждение изменения",
+                    "Желаете изменить?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    model.setData(index, new_value, Qt.EditRole)
+                    if self.table_panel:
+                        self.table_panel.save_cell_change(index, old_value, new_value)
+                else:
+                    editor.setText(str(old_value))
 
 class SideMenu(QWidget):
     def __init__(self, parent=None):
@@ -164,7 +240,6 @@ class SideMenu(QWidget):
     def create_menu_button(self, text, callback):
         btn = QPushButton(text)
         btn.setFixedHeight(55)
-        # ✅ УБРАНО: cursor property из CSS
         btn.setStyleSheet("""
             QPushButton { 
                 background-color: transparent; 
@@ -213,6 +288,7 @@ class TablePanel(QMainWindow):
         self.db = Database()
         self.current_table_name = None
         self.menu_opened = False
+        self.pending_changes = {}
         self.init_ui()
 
     def init_ui(self):
@@ -241,7 +317,6 @@ class TablePanel(QMainWindow):
 
         self.menu_button = QPushButton("☰")
         self.menu_button.setFixedSize(40, 40)
-        # ✅ УБРАНО: cursor property из CSS
         self.menu_button.setStyleSheet("""
             QPushButton { 
                 background-color: transparent; 
@@ -274,39 +349,77 @@ class TablePanel(QMainWindow):
         self.table_selector.currentTextChanged.connect(self.load_table)
         buttons_layout.addWidget(self.table_selector)
 
-        add_button = QPushButton("Добавить")
-        add_button.setFixedSize(100, 32)
-        add_button.setStyleSheet("QPushButton { background-color: #007BFF; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #0056B3; }")
+        add_button = QPushButton("➕ Добавить")
+        add_button.setFixedSize(120, 32)
+        add_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #007BFF; 
+                color: white; 
+                border-radius: 4px; 
+                font-weight: bold;
+                font-size: 13px;
+            } 
+            QPushButton:hover { 
+                background-color: #0056B3; 
+            }
+        """)
         add_button.clicked.connect(self.open_add_form)
         buttons_layout.addWidget(add_button)
 
-        edit_button = QPushButton("Редактировать")
-        edit_button.setFixedSize(100, 32)
-        edit_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #388E3C; }")
-        edit_button.clicked.connect(self.edit_selected_row)
-        buttons_layout.addWidget(edit_button)
-
-        delete_button = QPushButton("Удалить")
+        delete_button = QPushButton("🗑️ Удалить")
         delete_button.setFixedSize(100, 32)
-        delete_button.setStyleSheet("QPushButton { background-color: #D32F2F; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #B71C1C; }")
+        delete_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #D32F2F; 
+                color: white; 
+                border-radius: 4px; 
+                font-weight: bold;
+                font-size: 13px;
+            } 
+            QPushButton:hover { 
+                background-color: #B71C1C; 
+            }
+        """)
         delete_button.clicked.connect(self.delete_selected_row)
         buttons_layout.addWidget(delete_button)
 
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Поиск (полное совпадение)...")
+        self.search_bar.setPlaceholderText("Поиск...")
         self.search_bar.setFixedWidth(200)
         buttons_layout.addWidget(self.search_bar)
 
-        self.search_button = QPushButton("Поиск")
-        self.search_button.setFixedSize(80, 32)
-        self.search_button.setStyleSheet("QPushButton { background-color: #17A2B8; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #138496; }")
+        self.search_button = QPushButton("🔍 Поиск")
+        self.search_button.setFixedSize(90, 32)
+        self.search_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #17A2B8; 
+                color: white; 
+                border-radius: 4px; 
+                font-weight: bold;
+                font-size: 13px;
+            } 
+            QPushButton:hover { 
+                background-color: #138496; 
+            }
+        """)
         self.search_button.clicked.connect(self.perform_search)
         self.search_bar.returnPressed.connect(self.perform_search)
         buttons_layout.addWidget(self.search_button)
 
         logout_button = QPushButton("Выйти")
         logout_button.setFixedSize(80, 32)
-        logout_button.setStyleSheet("QPushButton { background-color: #6C757D; color: white; border-radius: 4px; font-weight: bold; } QPushButton:hover { background-color: #5A6268; }")
+        logout_button.setStyleSheet("""
+            QPushButton { 
+                background-color: #6C757D; 
+                color: white; 
+                border-radius: 4px; 
+                font-weight: bold;
+                font-size: 13px;
+            } 
+            QPushButton:hover { 
+                background-color: #5A6268; 
+            }
+        """)
         logout_button.clicked.connect(self.logout)
         buttons_layout.addWidget(logout_button)
 
@@ -319,17 +432,39 @@ class TablePanel(QMainWindow):
         self.data_table.setAlternatingRowColors(True)
         self.data_table.verticalHeader().setVisible(False)
         self.data_table.setSortingEnabled(False)
+        self.data_table.setEditTriggers(QTableView.EditTrigger.DoubleClicked | QTableView.EditTrigger.EditKeyPressed)
         
         header = SortableHeaderView(Qt.Horizontal, self.data_table)
         self.data_table.setHorizontalHeader(header)
         header.sortRequested.connect(self.sort_by_column)
         
         self.data_table.setStyleSheet("""
-            QTableView { background-color: white; color: black; font-size: 12px; alternate-background-color: #fafafa; }
-            QHeaderView::section { background-color: #004085; color: white; font-weight: bold; font-size: 14px; padding: 6px; border: none; }
-            QHeaderView::section:hover { background-color: #0056B3; }
-            QHeaderView::section:pressed { background-color: #003366; }
+            QTableView { 
+                background-color: white; 
+                color: black; 
+                font-size: 12px; 
+                alternate-background-color: #fafafa;
+                gridline-color: #e0e0e0;
+            }
+            QHeaderView::section { 
+                background-color: #004085; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 14px; 
+                padding: 6px; 
+                border: none; 
+            }
+            QHeaderView::section:hover { 
+                background-color: #0056B3; 
+            }
+            QHeaderView::section:pressed { 
+                background-color: #003366; 
+            }
         """)
+        
+        delegate = EditableItemDelegate(self.data_table, self)
+        self.data_table.setItemDelegate(delegate)
+        
         self.content_layout.addWidget(self.data_table, 1)
 
         self.proxy_model = CustomFilterProxyModel()
@@ -413,10 +548,15 @@ class TablePanel(QMainWindow):
         is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
         is_date = logical_index in DATE_COLUMNS.get(table_name, [])
         sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
-        if is_numeric or is_date: self.proxy_model.setSortRole(Qt.DisplayRole)
+        
+        if is_numeric:
+            self.proxy_model.setSortRole(Qt.EditRole)
+        elif is_date:
+            self.proxy_model.setSortRole(Qt.UserRole)
         else:
             self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
             self.proxy_model.setSortRole(Qt.DisplayRole)
+            
         self.proxy_model.sort(logical_index, sort_order)
         if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
             header = self.data_table.horizontalHeader()
@@ -435,23 +575,22 @@ class TablePanel(QMainWindow):
             self.db.insert_record(selected_table, new_data)
             self.reload_current_table()
 
-    def edit_selected_row(self):
-        selected_indexes = self.data_table.selectedIndexes()
-        if selected_indexes:
-            row = selected_indexes[0].row()
-            columns = range(self.data_table.model().columnCount())
-            selected_table = TABLES[self.table_selector.currentText()]
-            model = self.data_table.model()
-            values = {HEADERS[selected_table][col]: model.index(row, col).data() for col in columns}
-            dialog = InputForm(values)
-            result = dialog.exec()
-            if result == QDialog.Accepted:
-                updated_values = {field: dialog.input_fields[field].text() for field in dialog.input_fields}
-                record_id = model.index(row, 0).data()
-                self.db.update_record(selected_table, record_id, updated_values)
-                self.reload_current_table()
-        else:
-            QMessageBox.information(self, "Внимание", "Выберите запись для редактирования.")
+    def save_cell_change(self, index, old_value, new_value):
+        row = index.row()
+        col = index.column()
+        table_name = TABLES[self.table_selector.currentText()]
+        model = self.data_table.model()
+        
+        record_id = model.index(row, 0).data()
+        field_name = HEADERS[table_name][col]
+        
+        try:
+            updated_data = {field_name: new_value}
+            self.db.update_record(table_name, record_id, updated_data)
+            QMessageBox.information(self, "Успешно", "Изменения сохранены!")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить изменения:\n{str(e)}")
+            model.setData(index, old_value, Qt.DisplayRole)
 
     def delete_selected_row(self):
         selected_indexes = self.data_table.selectedIndexes()
@@ -462,7 +601,6 @@ class TablePanel(QMainWindow):
             table_name = TABLES[self.table_selector.currentText()]
             
             try:
-                # ✅ ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД
                 dependencies = self.db.get_foreign_key_dependencies(table_name, record_id)
                 
                 if dependencies:
@@ -517,13 +655,16 @@ class TablePanel(QMainWindow):
                     if len(text) > MAX_CELL_LENGTH: text = text[:MAX_CELL_LENGTH - 1] + "…"
                     item = QStandardItem(text)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                    
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         item.setData(value, Qt.DisplayRole)
                         item.setData(value, Qt.EditRole)
                     elif isinstance(value, (date, datetime)):
-                        item.setData(value.isoformat(), Qt.DisplayRole)
+                        formatted_date = value.strftime("%d.%m.%Y %H:%M")
+                        item.setData(formatted_date, Qt.DisplayRole)
                         item.setData(value, Qt.UserRole)
+                        item.setData(value, Qt.EditRole)
                     else:
                         item.setData(text, Qt.DisplayRole)
                         item.setData(text, Qt.EditRole)
