@@ -158,7 +158,9 @@ class SideMenu(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_window = parent
         self.setFixedWidth(280)
+        self.setVisible(False)
         self.setup_ui()
     
     def setup_ui(self):
@@ -169,9 +171,9 @@ class SideMenu(QWidget):
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
         # Заголовок меню
         header = QWidget()
@@ -182,23 +184,19 @@ class SideMenu(QWidget):
         
         menu_title = QLabel("Меню")
         menu_title.setFont(QFont('Segoe UI', 18, QFont.Weight.Bold))
+        menu_title.setStyleSheet("color: white;")
         header_layout.addWidget(menu_title)
         
-        layout.addWidget(header)
+        main_layout.addWidget(header)
         
-        # Прокрутка для пунктов меню
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none; background-color: transparent;")
+        # Контейнер для кнопок меню
+        self.buttons_container = QWidget()
+        self.buttons_container.setStyleSheet("background-color: transparent;")
+        buttons_layout = QVBoxLayout(self.buttons_container)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(2)
         
-        scroll_content = QWidget()
-        scroll_content.setStyleSheet("background-color: transparent;")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(2)
-        
-        # ПУНКТЫ МЕНЮ (заглушки)
+        # ПУНКТЫ МЕНЮ
         menu_items = [
             ("👤 Личный кабинет", self.open_profile),
             ("📥 Приход/расход материала", self.open_materials_flow),
@@ -207,11 +205,10 @@ class SideMenu(QWidget):
         
         for icon_text, callback in menu_items:
             btn = self.create_menu_button(icon_text, callback)
-            scroll_layout.addWidget(btn)
+            buttons_layout.addWidget(btn)
         
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        buttons_layout.addStretch()
+        main_layout.addWidget(self.buttons_container)
     
     def create_menu_button(self, text, callback):
         """Создаёт кнопку меню."""
@@ -240,18 +237,43 @@ class SideMenu(QWidget):
         btn.clicked.connect(callback)
         return btn
     
-    # ЗАГЛУШКИ ДЛЯ СТРАНИЦ
     def open_profile(self):
-        QMessageBox.information(self, "Личный кабинет", 
-            "Страница находится в разработке\n\nЗдесь будет:\n- Информация о пользователе\n- Настройки профиля\n- Смена пароля")
+        """Открывает страницу личного кабинета."""
+        if hasattr(self.parent_window, 'close_menu'):
+            self.parent_window.close_menu()
+        
+        try:
+            from .profile_page import ProfilePage
+            self.profile_window = ProfilePage(self.parent_window.user_data)
+            self.profile_window.back_to_table.connect(self.parent_window.show)
+            self.profile_window.show()
+            self.parent_window.hide()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть профиль:\n{str(e)}")
     
     def open_materials_flow(self):
+        """Заглушка для страницы прихода/расхода."""
+        if hasattr(self.parent_window, 'close_menu'):
+            self.parent_window.close_menu()
+        
         QMessageBox.information(self, "Приход/расход материала", 
-            "Страница находится в разработке\n\nЗдесь будет:\n- Оформление прихода материалов\n- Оформление расхода\n- История операций")
+            "Страница находится в разработке\n\n"
+            "Здесь будет:\n"
+            "- Оформление прихода материалов\n"
+            "- Оформление расхода\n"
+            "- История операций")
     
     def open_reports(self):
+        """Заглушка для страницы отчётов."""
+        if hasattr(self.parent_window, 'close_menu'):
+            self.parent_window.close_menu()
+        
         QMessageBox.information(self, "Отчёты по стройкам", 
-            "Страница находится в разработке\n\nЗдесь будет:\n- Отчёты по объектам\n- Статистика использования\n- Экспорт данных")
+            "Страница находится в разработке\n\n"
+            "Здесь будет:\n"
+            "- Отчёты по объектам\n"
+            "- Статистика использования\n"
+            "- Экспорт данных")
 
 
 class TablePanel(QMainWindow):
@@ -421,19 +443,21 @@ class TablePanel(QMainWindow):
 
         main_layout.addWidget(self.content_widget)
 
-        # БОКОВОЕ МЕНЮ (поверх всего)
+        # ✅ БОКОВОЕ МЕНЮ - правильное позиционирование
         self.side_menu = SideMenu(self)
-        self.side_menu.setGeometry(0, 0, 280, self.height())
-        self.side_menu.raise_()
-        self.side_menu.hide()
+        self.side_menu.setParent(self)
+        self.side_menu.setGeometry(-280, 0, 280, self.height())
+        self.side_menu.show()
         
-        # Оверлей
+        # ✅ ОВЕРЛЕЙ - поверх контента, но под меню
         self.overlay = QWidget(self)
         self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 0.4);")
         self.overlay.setGeometry(0, 0, self.width(), self.height())
-        self.overlay.raise_()
         self.overlay.hide()
         self.overlay.mousePressEvent = lambda e: self.toggle_menu()
+        
+        # ✅ Поднимаем меню на самый верх
+        self.side_menu.raise_()
 
         self.load_table("Пользователи")
 
@@ -441,7 +465,7 @@ class TablePanel(QMainWindow):
         """Обработка изменения размера окна."""
         super().resizeEvent(event)
         if hasattr(self, 'side_menu'):
-            self.side_menu.setGeometry(0, 0, 280, self.height())
+            self.side_menu.setGeometry(-280, 0, 280, self.height())
         if hasattr(self, 'overlay'):
             self.overlay.setGeometry(0, 0, self.width(), self.height())
 
@@ -454,10 +478,9 @@ class TablePanel(QMainWindow):
 
     def open_menu(self):
         """Открывает меню."""
-        self.side_menu.show()
-        self.side_menu.raise_()
         self.overlay.show()
         self.overlay.raise_()
+        self.side_menu.raise_()
         self.menu_opened = True
         
         # Анимация появления
@@ -480,7 +503,6 @@ class TablePanel(QMainWindow):
 
     def on_menu_closed(self):
         """Вызывается после закрытия меню."""
-        self.side_menu.hide()
         self.overlay.hide()
         self.menu_opened = False
 
