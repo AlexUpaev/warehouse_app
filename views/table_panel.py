@@ -10,7 +10,6 @@ from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
 from datetime import date, datetime
 from database import Database
 
-# Глобальные переменные и структуры
 TABLES = {
     "Пользователи": "users",
     "Категории": "categories",
@@ -38,35 +37,23 @@ HEADERS = {
     ]
 }
 
-# Столбцы с числовыми данными (для правильной сортировки)
 NUMERIC_COLUMNS = {
-    "users": [0],
-    "categories": [0],
-    "suppliers": [0],
-    "materials": [0, 2, 4, 5],
-    "transactions": [0, 3],
-    "material_history": [0, 2, 3, 4]
+    "users": [0], "categories": [0], "suppliers": [0],
+    "materials": [0, 2, 4, 5], "transactions": [0, 3], "material_history": [0, 2, 3, 4]
 }
 
-# Столбцы с датами
 DATE_COLUMNS = {
-    "users": [6, 7],
-    "categories": [3],
-    "suppliers": [6],
-    "materials": [10, 11],
-    "transactions": [6, 8],
-    "material_history": [8]
+    "users": [6, 7], "categories": [3], "suppliers": [6],
+    "materials": [10, 11], "transactions": [6, 8], "material_history": [8]
 }
 
 MAX_CELL_LENGTH = 60
-
 
 class InputForm(QDialog):
     def __init__(self, fields_or_values, parent=None):
         super().__init__(parent)
         form_layout = QFormLayout()
         self.setLayout(form_layout)
-
         if isinstance(fields_or_values, list):
             fields = fields_or_values
             values = None
@@ -74,7 +61,7 @@ class InputForm(QDialog):
             fields = list(fields_or_values.keys())
             values = fields_or_values
         else:
-            raise TypeError("Неподдерживаемый тип аргумента для формы.")
+            raise TypeError("Неподдерживаемый тип аргумента.")
 
         self.input_fields = {}
         for i, field in enumerate(fields):
@@ -97,12 +84,8 @@ class InputForm(QDialog):
         else:
             QMessageBox.warning(self, "Ошибка", "Необходимо заполнить все поля.")
 
-
 class SortableHeaderView(QHeaderView):
-    """Заголовок таблицы с сортировкой при клике."""
-    
     sortRequested = Signal(int, bool)
-    
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
         self.sort_column = -1
@@ -112,136 +95,100 @@ class SortableHeaderView(QHeaderView):
         self.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     
     def on_section_clicked(self, logical_index):
-        if logical_index == 0:
-            return
-        
+        if logical_index == 0: return
         if self.sort_column == logical_index:
             self.sort_ascending = not self.sort_ascending
         else:
             self.sort_column = logical_index
             self.sort_ascending = True
-        
         self.sortRequested.emit(logical_index, self.sort_ascending)
         self.viewport().update()
 
-
 class CustomFilterProxyModel(QSortFilterProxyModel):
-    """Прокси-модель с поиском по полному совпадению в любой ячейке."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.search_text = ""
-    
     def set_search_text(self, text):
         self.search_text = text.strip().lower()
         self.invalidateFilter()
-    
     def filterAcceptsRow(self, source_row, source_parent):
-        if not self.search_text:
-            return True
-        
+        if not self.search_text: return True
         source_model = self.sourceModel()
-        if source_model is None:
-            return True
-        
+        if source_model is None: return True
         for column in range(source_model.columnCount()):
             index = source_model.index(source_row, column, source_parent)
             cell_value = str(source_model.data(index, Qt.DisplayRole) or "").lower()
-            
-            if cell_value == self.search_text:
-                return True
-        
+            if cell_value == self.search_text: return True
         return False
 
-
 class SideMenu(QWidget):
-    """Боковое меню с плавной анимацией."""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
         self.setFixedWidth(280)
-        self.setVisible(False)
         self.setup_ui()
     
     def setup_ui(self):
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1A529C;
-                color: white;
-            }
-        """)
-        
+        self.setStyleSheet("QWidget { background-color: #1A529C; color: white; }")
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Заголовок меню
         header = QWidget()
         header.setFixedHeight(80)
         header.setStyleSheet("background-color: #0d47a1;")
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(20, 20, 20, 20)
-        
         menu_title = QLabel("Меню")
         menu_title.setFont(QFont('Segoe UI', 18, QFont.Weight.Bold))
-        menu_title.setStyleSheet("color: white;")
         header_layout.addWidget(menu_title)
-        
         main_layout.addWidget(header)
         
-        # Контейнер для кнопок меню
         self.buttons_container = QWidget()
         self.buttons_container.setStyleSheet("background-color: transparent;")
         buttons_layout = QVBoxLayout(self.buttons_container)
         buttons_layout.setContentsMargins(0, 0, 0, 0)
         buttons_layout.setSpacing(2)
         
-        # ПУНКТЫ МЕНЮ
         menu_items = [
             ("👤 Личный кабинет", self.open_profile),
             ("📥 Приход/расход материала", self.open_materials_flow),
             ("📊 Отчёты по стройкам", self.open_reports),
         ]
-        
         for icon_text, callback in menu_items:
             btn = self.create_menu_button(icon_text, callback)
             buttons_layout.addWidget(btn)
-        
         buttons_layout.addStretch()
         main_layout.addWidget(self.buttons_container)
     
     def create_menu_button(self, text, callback):
-        """Создаёт кнопку меню."""
         btn = QPushButton(text)
         btn.setFixedHeight(55)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # ✅ УБРАНО: cursor property из CSS
         btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: white;
-                text-align: left;
-                padding-left: 30px;
-                font-size: 14px;
-                font-weight: 500;
-                border: none;
-                border-left: 4px solid transparent;
+            QPushButton { 
+                background-color: transparent; 
+                color: white; 
+                text-align: left; 
+                padding-left: 30px; 
+                font-size: 14px; 
+                font-weight: 500; 
+                border: none; 
+                border-left: 4px solid transparent; 
             }
-            QPushButton:hover {
-                background-color: #1565C0;
-                border-left: 4px solid #64B5F6;
+            QPushButton:hover { 
+                background-color: #1565C0; 
+                border-left: 4px solid #64B5F6; 
             }
-            QPushButton:pressed {
-                background-color: #0d47a1;
+            QPushButton:pressed { 
+                background-color: #0d47a1; 
             }
         """)
         btn.clicked.connect(callback)
         return btn
     
     def open_profile(self):
-        """Открывает страницу личного кабинета."""
-        if hasattr(self.parent_window, 'close_menu'):
-            self.parent_window.close_menu()
-        
+        if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()
         try:
             from .profile_page import ProfilePage
             self.profile_window = ProfilePage(self.parent_window.user_data)
@@ -252,29 +199,12 @@ class SideMenu(QWidget):
             QMessageBox.critical(self, "Ошибка", f"Не удалось открыть профиль:\n{str(e)}")
     
     def open_materials_flow(self):
-        """Заглушка для страницы прихода/расхода."""
-        if hasattr(self.parent_window, 'close_menu'):
-            self.parent_window.close_menu()
-        
-        QMessageBox.information(self, "Приход/расход материала", 
-            "Страница находится в разработке\n\n"
-            "Здесь будет:\n"
-            "- Оформление прихода материалов\n"
-            "- Оформление расхода\n"
-            "- История операций")
+        if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()
+        QMessageBox.information(self, "Приход/расход материала", "Страница находится в разработке")
     
     def open_reports(self):
-        """Заглушка для страницы отчётов."""
-        if hasattr(self.parent_window, 'close_menu'):
-            self.parent_window.close_menu()
-        
-        QMessageBox.information(self, "Отчёты по стройкам", 
-            "Страница находится в разработке\n\n"
-            "Здесь будет:\n"
-            "- Отчёты по объектам\n"
-            "- Статистика использования\n"
-            "- Экспорт данных")
-
+        if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()
+        QMessageBox.information(self, "Отчёты по стройкам", "Страница находится в разработке")
 
 class TablePanel(QMainWindow):
     def __init__(self, user_data):
@@ -298,36 +228,33 @@ class TablePanel(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Контейнер для основного контента
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(0)
 
-        # Верхняя панель
         top_panel = QWidget()
         top_panel.setFixedHeight(60)
         top_panel.setStyleSheet("background-color: #F0F8FF; border-bottom: 2px solid #1A529C;")
         top_layout = QHBoxLayout(top_panel)
         top_layout.setContentsMargins(10, 0, 20, 0)
 
-        # КНОПКА-ГАМБУРГЕР
         self.menu_button = QPushButton("☰")
         self.menu_button.setFixedSize(40, 40)
-        self.menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # ✅ УБРАНО: cursor property из CSS
         self.menu_button.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #1A529C;
-                border: none;
-                border-radius: 4px;
-                font-size: 24px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #E3F2FD;
-                color: #0d47a1;
-            }
+            QPushButton { 
+                background-color: transparent; 
+                color: #1A529C; 
+                border: none; 
+                border-radius: 4px; 
+                font-size: 24px; 
+                font-weight: bold; 
+            } 
+            QPushButton:hover { 
+                background-color: #E3F2FD; 
+                color: #0d47a1; 
+            } 
         """)
         self.menu_button.clicked.connect(self.toggle_menu)
         top_layout.addWidget(self.menu_button)
@@ -387,7 +314,6 @@ class TablePanel(QMainWindow):
         top_layout.addStretch()
         self.content_layout.addWidget(top_panel)
 
-        # Таблица данных
         self.data_table = QTableView()
         self.data_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.data_table.setAlternatingRowColors(True)
@@ -399,38 +325,19 @@ class TablePanel(QMainWindow):
         header.sortRequested.connect(self.sort_by_column)
         
         self.data_table.setStyleSheet("""
-            QTableView { 
-                background-color: white; 
-                color: black; 
-                font-size: 12px; 
-                alternate-background-color: #fafafa; 
-            }
-            QHeaderView::section { 
-                background-color: #004085; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 14px; 
-                padding: 6px; 
-                border: none;
-            }
-            QHeaderView::section:hover { 
-                background-color: #0056B3;
-                cursor: pointer;
-            }
-            QHeaderView::section:pressed { 
-                background-color: #003366;
-            }
+            QTableView { background-color: white; color: black; font-size: 12px; alternate-background-color: #fafafa; }
+            QHeaderView::section { background-color: #004085; color: white; font-weight: bold; font-size: 14px; padding: 6px; border: none; }
+            QHeaderView::section:hover { background-color: #0056B3; }
+            QHeaderView::section:pressed { background-color: #003366; }
         """)
         self.content_layout.addWidget(self.data_table, 1)
 
-        # Прокси-модель
         self.proxy_model = CustomFilterProxyModel()
         self.proxy_model.setSourceModel(None)
         self.proxy_model.setFilterKeyColumn(-1)
         self.proxy_model.setDynamicSortFilter(False)
         self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
 
-        # Нижняя панель
         bottom_panel = QWidget()
         bottom_panel.setFixedHeight(40)
         bottom_panel.setStyleSheet("background-color: #F5F5F5; border-top: 1px solid #E0E0E0;")
@@ -443,47 +350,34 @@ class TablePanel(QMainWindow):
 
         main_layout.addWidget(self.content_widget)
 
-        # ✅ БОКОВОЕ МЕНЮ - правильное позиционирование
         self.side_menu = SideMenu(self)
         self.side_menu.setParent(self)
         self.side_menu.setGeometry(-280, 0, 280, self.height())
         self.side_menu.show()
         
-        # ✅ ОВЕРЛЕЙ - поверх контента, но под меню
         self.overlay = QWidget(self)
         self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 0.4);")
         self.overlay.setGeometry(0, 0, self.width(), self.height())
         self.overlay.hide()
         self.overlay.mousePressEvent = lambda e: self.toggle_menu()
-        
-        # ✅ Поднимаем меню на самый верх
         self.side_menu.raise_()
 
         self.load_table("Пользователи")
 
     def resizeEvent(self, event):
-        """Обработка изменения размера окна."""
         super().resizeEvent(event)
-        if hasattr(self, 'side_menu'):
-            self.side_menu.setGeometry(-280, 0, 280, self.height())
-        if hasattr(self, 'overlay'):
-            self.overlay.setGeometry(0, 0, self.width(), self.height())
+        if hasattr(self, 'side_menu'): self.side_menu.setGeometry(-280, 0, 280, self.height())
+        if hasattr(self, 'overlay'): self.overlay.setGeometry(0, 0, self.width(), self.height())
 
     def toggle_menu(self):
-        """Переключает состояние меню."""
-        if self.menu_opened:
-            self.close_menu()
-        else:
-            self.open_menu()
+        if self.menu_opened: self.close_menu()
+        else: self.open_menu()
 
     def open_menu(self):
-        """Открывает меню."""
         self.overlay.show()
         self.overlay.raise_()
         self.side_menu.raise_()
         self.menu_opened = True
-        
-        # Анимация появления
         self.menu_animation = QPropertyAnimation(self.side_menu, b"pos")
         self.menu_animation.setDuration(300)
         self.menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
@@ -492,7 +386,6 @@ class TablePanel(QMainWindow):
         self.menu_animation.start()
 
     def close_menu(self):
-        """Закрывает меню."""
         self.menu_animation = QPropertyAnimation(self.side_menu, b"pos")
         self.menu_animation.setDuration(300)
         self.menu_animation.setEasingCurve(QEasingCurve.InOutCubic)
@@ -502,7 +395,6 @@ class TablePanel(QMainWindow):
         self.menu_animation.start()
 
     def on_menu_closed(self):
-        """Вызывается после закрытия меню."""
         self.overlay.hide()
         self.menu_opened = False
 
@@ -521,15 +413,11 @@ class TablePanel(QMainWindow):
         is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
         is_date = logical_index in DATE_COLUMNS.get(table_name, [])
         sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
-        
-        if is_numeric or is_date:
-            self.proxy_model.setSortRole(Qt.DisplayRole)
+        if is_numeric or is_date: self.proxy_model.setSortRole(Qt.DisplayRole)
         else:
             self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
             self.proxy_model.setSortRole(Qt.DisplayRole)
-        
         self.proxy_model.sort(logical_index, sort_order)
-        
         if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
             header = self.data_table.horizontalHeader()
             header.sort_column = logical_index
@@ -555,7 +443,6 @@ class TablePanel(QMainWindow):
             selected_table = TABLES[self.table_selector.currentText()]
             model = self.data_table.model()
             values = {HEADERS[selected_table][col]: model.index(row, col).data() for col in columns}
-            
             dialog = InputForm(values)
             result = dialog.exec()
             if result == QDialog.Accepted:
@@ -569,15 +456,46 @@ class TablePanel(QMainWindow):
     def delete_selected_row(self):
         selected_indexes = self.data_table.selectedIndexes()
         if selected_indexes:
-            confirm_result = QMessageBox.question(self, "Подтверждение удаления",
-                                               "Вы действительно хотите удалить выбранную запись?",
-                                               QMessageBox.Yes | QMessageBox.No)
-            if confirm_result == QMessageBox.Yes:
-                row = selected_indexes[0].row()
-                model = self.data_table.model()
-                record_id = model.index(row, 0).data()
-                self.db.delete_record(TABLES[self.table_selector.currentText()], record_id)
-                self.reload_current_table()
+            row = selected_indexes[0].row()
+            model = self.data_table.model()
+            record_id = model.index(row, 0).data()
+            table_name = TABLES[self.table_selector.currentText()]
+            
+            try:
+                # ✅ ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД
+                dependencies = self.db.get_foreign_key_dependencies(table_name, record_id)
+                
+                if dependencies:
+                    dep_text = "\n".join([f"• {table}: {count} записей" for table, count in dependencies.items()])
+                    total = sum(dependencies.values())
+                    
+                    msg = QMessageBox(self)
+                    msg.setIcon(QMessageBox.Question)
+                    msg.setWindowTitle("Подтверждение каскадного удаления")
+                    msg.setText(f"Будет удалено {total} связанных записей:")
+                    msg.setInformativeText(f"{dep_text}\n\nЖелаете продолжить?")
+                    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                    msg.setDefaultButton(QMessageBox.No)
+                    
+                    result = msg.exec()
+                    
+                    if result == QMessageBox.Yes:
+                        deleted = self.db.cascade_delete(table_name, record_id)
+                        deleted_text = "\n".join([f"• {table}: {count}" for table, count in deleted.items()])
+                        total_deleted = sum(deleted.values())
+                        QMessageBox.information(self, "Успешно", f"Удалено записей: {total_deleted}\n\n{deleted_text}")
+                        self.reload_current_table()
+                else:
+                    confirm_result = QMessageBox.question(self, "Подтверждение удаления",
+                                                       "Вы действительно хотите удалить выбранную запись?",
+                                                       QMessageBox.Yes | QMessageBox.No)
+                    if confirm_result == QMessageBox.Yes:
+                        self.db.delete_record(table_name, record_id)
+                        self.reload_current_table()
+                        QMessageBox.information(self, "Успешно", "Запись успешно удалена!")
+                        
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении:\n{str(e)}")
         else:
             QMessageBox.information(self, "Внимание", "Выберите запись для удаления.")
 
@@ -587,23 +505,18 @@ class TablePanel(QMainWindow):
     def load_table(self, display_name: str):
         table_name = TABLES[display_name]
         self.current_table_name = table_name
-        
         try:
             rows = self.db.get_table_data(table_name)
             headers = HEADERS[table_name]
-
             model = QStandardItemModel(len(rows), len(headers))
             model.setHorizontalHeaderLabels(headers)
 
             for row_idx, row in enumerate(rows):
                 for col_idx, value in enumerate(row.values()):
                     text = str(value) if value is not None else ""
-                    if len(text) > MAX_CELL_LENGTH:
-                        text = text[:MAX_CELL_LENGTH - 1] + "…"
-
+                    if len(text) > MAX_CELL_LENGTH: text = text[:MAX_CELL_LENGTH - 1] + "…"
                     item = QStandardItem(text)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                         item.setData(value, Qt.DisplayRole)
@@ -614,13 +527,11 @@ class TablePanel(QMainWindow):
                     else:
                         item.setData(text, Qt.DisplayRole)
                         item.setData(text, Qt.EditRole)
-
                     model.setItem(row_idx, col_idx, item)
 
             header = self.data_table.horizontalHeader()
             header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-            if header.count() > 0:
-                header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
+            if header.count() > 0: header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
 
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
