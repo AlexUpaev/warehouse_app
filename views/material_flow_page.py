@@ -5,10 +5,9 @@ from PySide6.QtWidgets import (
     QHeaderView, QFrame
 )
 from PySide6.QtCore import Qt, QDate, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor
 from database import Database
 from datetime import datetime
-from PySide6.QtGui import QColor
 
 class MaterialFlowPage(QMainWindow):
     back_to_table = Signal()
@@ -28,15 +27,14 @@ class MaterialFlowPage(QMainWindow):
         self.db = Database()
         self.materials_cache = []
         self.suppliers_cache = []
-        self.users_cache = []
         self.init_ui()
         self.load_combo_data()
-        self.refresh_materials_indicator()
+        self.refresh_all_data()
         
     def init_ui(self):
         self.setWindowTitle(f"Приход/расход материалов | {self.user_data['full_name']}")
-        self.setGeometry(100, 100, 1100, 750)
-        self.setMinimumSize(900, 700)
+        self.setGeometry(100, 100, 1200, 800)
+        self.setMinimumSize(1000, 750)
         
         central_widget = QWidget()
         central_widget.setStyleSheet("background-color: white;")
@@ -109,12 +107,12 @@ class MaterialFlowPage(QMainWindow):
             QTabBar::tab {{
                 background-color: {self.PRIMARY_LIGHT};
                 color: {self.PRIMARY_COLOR};
-                padding: 12px 30px;
+                padding: 10px 20px;
                 margin-right: 2px;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
                 font-weight: bold;
-                font-size: 14px;
+                font-size: 13px;
             }}
             QTabBar::tab:selected {{
                 background-color: white;
@@ -125,30 +123,39 @@ class MaterialFlowPage(QMainWindow):
             }}
         """)
         
-        # Вкладка Приход
+        # 1. Приход
         self.incoming_tab = QWidget()
         self.incoming_tab.setStyleSheet("background-color: #FAFAFA;")
         self.setup_incoming_tab()
-        self.tabs.addTab(self.incoming_tab, "📥 Приход материалов")
+        self.tabs.addTab(self.incoming_tab, "📥 Приход")
         
-        # Вкладка Расход
+        # 2. Расход
         self.outgoing_tab = QWidget()
         self.outgoing_tab.setStyleSheet("background-color: #FAFAFA;")
         self.setup_outgoing_tab()
-        self.tabs.addTab(self.outgoing_tab, "📤 Расход материалов")
+        self.tabs.addTab(self.outgoing_tab, "📤 Расход")
         
-        # Устанавливаем первую вкладку активной
+        # 3. Информация по материалам
+        self.materials_info_tab = QWidget()
+        self.materials_info_tab.setStyleSheet("background-color: #FAFAFA;")
+        self.setup_materials_info_tab()
+        self.tabs.addTab(self.materials_info_tab, "📦 Материалы")
+        
+        # 4. История движений
+        self.history_tab = QWidget()
+        self.history_tab.setStyleSheet("background-color: #FAFAFA;")
+        self.setup_history_tab()
+        self.tabs.addTab(self.history_tab, "📜 История")
+        
         self.tabs.setCurrentIndex(0)
-        
         main_layout.addWidget(self.tabs, 1)
         
     def setup_incoming_tab(self):
-        """Настройка вкладки Приход"""
         layout = QVBoxLayout(self.incoming_tab)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
         
-        # ─── Индикация запасов ─────────────────────────────────
+        # Индикация запасов
         self.incoming_indicator_label = QLabel("📊 Текущие запасы материалов:")
         self.incoming_indicator_label.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
         self.incoming_indicator_label.setStyleSheet("color: #2C3E50;")
@@ -157,7 +164,7 @@ class MaterialFlowPage(QMainWindow):
         self.incoming_indicator_table = QTableWidget()
         self.incoming_indicator_table.setColumnCount(5)
         self.incoming_indicator_table.setHorizontalHeaderLabels([
-            "Материал", "Категория", "Текущий остаток", "Мин. запас", "Статус"
+            "Материал", "Категория", "Остаток", "Мин. запас", "Статус"
         ])
         self.incoming_indicator_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.incoming_indicator_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -167,7 +174,6 @@ class MaterialFlowPage(QMainWindow):
                 background-color: white;
                 border: 1px solid #E0E0E0;
                 border-radius: 4px;
-                gridline-color: #E0E0E0;
             }
             QTableWidget::item {
                 padding: 8px;
@@ -182,59 +188,51 @@ class MaterialFlowPage(QMainWindow):
         """)
         layout.addWidget(self.incoming_indicator_table)
         
-        # ─── Форма прихода ─────────────────────────────────────
-        form_group = self._create_group_box("➕ Добавить приход материала", self.INCOMING_COLOR)
+        # Форма прихода
+        form_group = self._create_group_box("➕ Добавить приход", self.INCOMING_COLOR)
         form_layout = QFormLayout(form_group)
         form_layout.setSpacing(12)
         
-        # Материал
         self.incoming_material = QComboBox()
         self.incoming_material.setMinimumHeight(40)
         self.incoming_material.setStyleSheet(self._input_style())
-        self.incoming_material.currentIndexChanged.connect(self.on_incoming_material_changed)
-        form_layout.addRow("  Материал:", self.incoming_material)
+        form_layout.addRow("Материал:", self.incoming_material)
         
-        # Количество
         self.incoming_quantity = QLineEdit()
-        self.incoming_quantity.setPlaceholderText("Например: 100")
+        self.incoming_quantity.setPlaceholderText("Количество")
         self.incoming_quantity.setMinimumHeight(40)
         self.incoming_quantity.setStyleSheet(self._input_style())
-        form_layout.addRow("  Количество:", self.incoming_quantity)
+        form_layout.addRow("Количество:", self.incoming_quantity)
         
-        # Поставщик
         self.incoming_supplier = QComboBox()
         self.incoming_supplier.setEditable(True)
         self.incoming_supplier.setMinimumHeight(40)
         self.incoming_supplier.setStyleSheet(self._input_style())
-        form_layout.addRow("  Поставщик:", self.incoming_supplier)
+        form_layout.addRow("Поставщик:", self.incoming_supplier)
         
-        # Номер документа
         self.incoming_doc_number = QLineEdit()
         self.incoming_doc_number.setPlaceholderText("ПРИХ-001/2025")
         self.incoming_doc_number.setMinimumHeight(40)
         self.incoming_doc_number.setStyleSheet(self._input_style())
-        form_layout.addRow("  Номер документа:", self.incoming_doc_number)
+        form_layout.addRow("Документ:", self.incoming_doc_number)
         
-        # Дата
         self.incoming_doc_date = QDateEdit()
         self.incoming_doc_date.setCalendarPopup(True)
         self.incoming_doc_date.setDate(QDate.currentDate())
         self.incoming_doc_date.setMinimumHeight(40)
         self.incoming_doc_date.setStyleSheet(self._input_style())
-        form_layout.addRow("  Дата документа:", self.incoming_doc_date)
+        form_layout.addRow("Дата:", self.incoming_doc_date)
         
-        # Примечание
         self.incoming_notes = QTextEdit()
-        self.incoming_notes.setPlaceholderText("Дополнительная информация...")
-        self.incoming_notes.setMaximumHeight(80)
+        self.incoming_notes.setPlaceholderText("Примечание...")
+        self.incoming_notes.setMaximumHeight(60)
         self.incoming_notes.setStyleSheet(self._input_style())
-        form_layout.addRow("  Примечание:", self.incoming_notes)
+        form_layout.addRow("Примечание:", self.incoming_notes)
         
-        # Кнопка добавить
-        add_button = QPushButton("✅ Провести приход")
-        add_button.setFixedHeight(45)
-        add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_button.setStyleSheet(f"""
+        add_btn = QPushButton("✅ Провести приход")
+        add_btn.setFixedHeight(45)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.INCOMING_COLOR};
                 color: white;
@@ -247,19 +245,18 @@ class MaterialFlowPage(QMainWindow):
                 background-color: {self.INCOMING_DARK};
             }}
         """)
-        add_button.clicked.connect(self.add_incoming)
-        form_layout.addRow(add_button)
+        add_btn.clicked.connect(self.add_incoming)
+        form_layout.addRow(add_btn)
         
         layout.addWidget(form_group)
         layout.addStretch()
         
     def setup_outgoing_tab(self):
-        """Настройка вкладки Расход"""
         layout = QVBoxLayout(self.outgoing_tab)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
         
-        # ─── Индикация запасов ─────────────────────────────────
+        # Индикация запасов
         self.outgoing_indicator_label = QLabel("📊 Текущие запасы материалов:")
         self.outgoing_indicator_label.setFont(QFont('Segoe UI', 12, QFont.Weight.Bold))
         self.outgoing_indicator_label.setStyleSheet("color: #2C3E50;")
@@ -268,7 +265,7 @@ class MaterialFlowPage(QMainWindow):
         self.outgoing_indicator_table = QTableWidget()
         self.outgoing_indicator_table.setColumnCount(5)
         self.outgoing_indicator_table.setHorizontalHeaderLabels([
-            "Материал", "Категория", "Текущий остаток", "Мин. запас", "Статус"
+            "Материал", "Категория", "Остаток", "Мин. запас", "Статус"
         ])
         self.outgoing_indicator_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.outgoing_indicator_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -278,7 +275,6 @@ class MaterialFlowPage(QMainWindow):
                 background-color: white;
                 border: 1px solid #E0E0E0;
                 border-radius: 4px;
-                gridline-color: #E0E0E0;
             }
             QTableWidget::item {
                 padding: 8px;
@@ -293,57 +289,50 @@ class MaterialFlowPage(QMainWindow):
         """)
         layout.addWidget(self.outgoing_indicator_table)
         
-        # ─── Форма расхода ─────────────────────────────────────
+        # Форма расхода
         form_group = self._create_group_box("➖ Списать материал", self.OUTGOING_COLOR)
         form_layout = QFormLayout(form_group)
         form_layout.setSpacing(12)
         
-        # Материал
         self.outgoing_material = QComboBox()
         self.outgoing_material.setMinimumHeight(40)
         self.outgoing_material.setStyleSheet(self._input_style())
         self.outgoing_material.currentIndexChanged.connect(self.on_outgoing_material_changed)
-        form_layout.addRow("  Материал:", self.outgoing_material)
+        form_layout.addRow("Материал:", self.outgoing_material)
         
-        # Доступно (информация)
         self.outgoing_available = QLabel("Доступно: 0 шт")
         self.outgoing_available.setStyleSheet("font-weight: bold; color: #7F8C8D; padding: 8px;")
-        form_layout.addRow("  Доступно:", self.outgoing_available)
+        form_layout.addRow("Доступно:", self.outgoing_available)
         
-        # Количество
         self.outgoing_quantity = QLineEdit()
-        self.outgoing_quantity.setPlaceholderText("Например: 50")
+        self.outgoing_quantity.setPlaceholderText("Количество")
         self.outgoing_quantity.setMinimumHeight(40)
         self.outgoing_quantity.setStyleSheet(self._input_style())
-        form_layout.addRow("  Количество:", self.outgoing_quantity)
+        form_layout.addRow("Количество:", self.outgoing_quantity)
         
-        # Номер документа
         self.outgoing_doc_number = QLineEdit()
         self.outgoing_doc_number.setPlaceholderText("РАСХ-015/2025")
         self.outgoing_doc_number.setMinimumHeight(40)
         self.outgoing_doc_number.setStyleSheet(self._input_style())
-        form_layout.addRow("  Номер документа:", self.outgoing_doc_number)
+        form_layout.addRow("Документ:", self.outgoing_doc_number)
         
-        # Дата
         self.outgoing_doc_date = QDateEdit()
         self.outgoing_doc_date.setCalendarPopup(True)
         self.outgoing_doc_date.setDate(QDate.currentDate())
         self.outgoing_doc_date.setMinimumHeight(40)
         self.outgoing_doc_date.setStyleSheet(self._input_style())
-        form_layout.addRow("  Дата документа:", self.outgoing_doc_date)
+        form_layout.addRow("Дата:", self.outgoing_doc_date)
         
-        # Примечание
         self.outgoing_notes = QTextEdit()
-        self.outgoing_notes.setPlaceholderText("Например: Отгрузка на объект...")
-        self.outgoing_notes.setMaximumHeight(80)
+        self.outgoing_notes.setPlaceholderText("Примечание...")
+        self.outgoing_notes.setMaximumHeight(60)
         self.outgoing_notes.setStyleSheet(self._input_style())
-        form_layout.addRow("  Примечание:", self.outgoing_notes)
+        form_layout.addRow("Примечание:", self.outgoing_notes)
         
-        # Кнопка добавить
-        add_button = QPushButton("❌ Провести расход")
-        add_button.setFixedHeight(45)
-        add_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_button.setStyleSheet(f"""
+        add_btn = QPushButton("❌ Провести расход")
+        add_btn.setFixedHeight(45)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.OUTGOING_COLOR};
                 color: white;
@@ -356,14 +345,117 @@ class MaterialFlowPage(QMainWindow):
                 background-color: {self.OUTGOING_DARK};
             }}
         """)
-        add_button.clicked.connect(self.add_outgoing)
-        form_layout.addRow(add_button)
+        add_btn.clicked.connect(self.add_outgoing)
+        form_layout.addRow(add_btn)
         
         layout.addWidget(form_group)
         layout.addStretch()
+
+    def setup_materials_info_tab(self):
+        layout = QVBoxLayout(self.materials_info_tab)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        header_layout = QHBoxLayout()
+        title = QLabel("📋 Полный список материалов")
+        title.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {self.PRIMARY_COLOR};")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn.setFixedSize(100, 32)
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.PRIMARY_COLOR};
+                color: white;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.PRIMARY_DARK};
+            }}
+        """)
+        refresh_btn.clicked.connect(self.refresh_materials_info)
+        header_layout.addWidget(refresh_btn)
+        layout.addLayout(header_layout)
+        
+        self.materials_table = QTableWidget()
+        self.materials_table.setColumnCount(8)
+        self.materials_table.setHorizontalHeaderLabels([
+            "ID", "Наименование", "Категория", "Остаток", "Ед.", "Мин. запас", "Цена (₽)", "Поставщик"
+        ])
+        self.materials_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.materials_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.materials_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+            }
+            QHeaderView::section {
+                background-color: #1A529C;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border: none;
+            }
+        """)
+        layout.addWidget(self.materials_table, 1)
+
+    def setup_history_tab(self):
+        layout = QVBoxLayout(self.history_tab)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        header_layout = QHBoxLayout()
+        title = QLabel("📜 Журнал приходов и расходов")
+        title.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {self.PRIMARY_COLOR};")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn.setFixedSize(100, 32)
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.PRIMARY_COLOR};
+                color: white;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.PRIMARY_DARK};
+            }}
+        """)
+        refresh_btn.clicked.connect(self.refresh_history)
+        header_layout.addWidget(refresh_btn)
+        layout.addLayout(header_layout)
+        
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(7)
+        self.history_table.setHorizontalHeaderLabels([
+            "Дата", "Материал", "Тип", "Кол-во", "Документ", "Пользователь", "Примечание"
+        ])
+        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.history_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+            }
+            QHeaderView::section {
+                background-color: #2C3E50;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border: none;
+            }
+        """)
+        layout.addWidget(self.history_table, 1)
         
     def _create_group_box(self, title: str, color: str) -> QGroupBox:
-        """Создаёт группу с единым стилем"""
         group = QGroupBox(title)
         group.setStyleSheet(f"""
             QGroupBox {{
@@ -384,7 +476,6 @@ class MaterialFlowPage(QMainWindow):
         return group
         
     def _input_style(self) -> str:
-        """Единый стиль для полей ввода"""
         return f"""
             QComboBox, QLineEdit, QTextEdit, QDateEdit {{
                 background-color: white;
@@ -402,9 +493,7 @@ class MaterialFlowPage(QMainWindow):
         """
         
     def load_combo_data(self):
-        """Загружает данные для ComboBox с использованием JOIN"""
         try:
-            # Загрузка материалов с категориями (JOIN)
             materials_query = """
                 SELECT m.id, m.name, m.quantity, m.unit, m.min_quantity, c.name as category_name
                 FROM materials m
@@ -416,9 +505,7 @@ class MaterialFlowPage(QMainWindow):
             cursor.execute(materials_query)
             self.materials_cache = cursor.fetchall()
             cursor.close()
-            conn.close()
             
-            # Заполняем ComboBox материалов
             self.incoming_material.clear()
             self.outgoing_material.clear()
             for mat in self.materials_cache:
@@ -427,36 +514,29 @@ class MaterialFlowPage(QMainWindow):
                 self.incoming_material.addItem(display_text, mat_id)
                 self.outgoing_material.addItem(display_text, mat_id)
             
-            # Загрузка поставщиков (из materials.supplier - уникальные)
             suppliers_query = """
-                SELECT DISTINCT supplier 
-                FROM materials 
+                SELECT DISTINCT supplier
+                FROM materials
                 WHERE supplier IS NOT NULL AND supplier != ''
                 ORDER BY supplier
             """
-            cursor = conn.cursor() if (conn := self.db.get_connection()) else None
-            if cursor:
-                cursor.execute(suppliers_query)
-                self.suppliers_cache = [row[0] for row in cursor.fetchall()]
-                cursor.close()
-                conn.close()
-                
-                self.incoming_supplier.addItems(self.suppliers_cache)
-            
-            # Загрузка пользователей
-            users_query = "SELECT id, full_name FROM users WHERE is_active = TRUE ORDER BY full_name"
-            conn = self.db.get_connection()
             cursor = conn.cursor()
-            cursor.execute(users_query)
-            self.users_cache = cursor.fetchall()
+            cursor.execute(suppliers_query)
+            self.suppliers_cache = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
             
+            self.incoming_supplier.addItems(self.suppliers_cache)
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить данные: {str(e)}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить списки: {str(e)}")
+            
+    def refresh_all_data(self):
+        """Обновляет данные на всех вкладках"""
+        self.refresh_materials_indicator()
+        self.refresh_materials_info()
+        self.refresh_history()
             
     def refresh_materials_indicator(self):
-        """Обновляет таблицу индикации запасов"""
         try:
             query = """
                 SELECT m.id, m.name, m.quantity, m.min_quantity, m.unit, c.name as category_name
@@ -471,129 +551,170 @@ class MaterialFlowPage(QMainWindow):
             cursor.close()
             conn.close()
             
-            # Обновляем обе таблицы
             for table in [self.incoming_indicator_table, self.outgoing_indicator_table]:
                 table.setRowCount(len(materials))
                 for row_idx, mat in enumerate(materials):
                     mat_id, name, qty, min_qty, unit, category = mat
                     
-                    # Определяем статус и цвет
                     if qty == 0:
                         status = "⚫ Нет в наличии"
                         color = "#2C3E50"
-                        bg_color = "#F5F5F5"
+                        bg = "#F5F5F5"
                     elif qty <= min_qty:
-                        percentage = (qty / min_qty * 100) if min_qty > 0 else 0
-                        status = f"🔴 Критически мало ({percentage:.0f}%)"
+                        pct = (qty / min_qty * 100) if min_qty > 0 else 0
+                        status = f"🔴 Критично ({pct:.0f}%)"
                         color = "#E74C3C"
-                        bg_color = "#FADBD8"
+                        bg = "#FADBD8"
                     elif qty <= min_qty * 1.5:
-                        percentage = (qty / min_qty * 100) if min_qty > 0 else 0
-                        status = f"🟡 Заканчивается ({percentage:.0f}%)"
+                        pct = (qty / min_qty * 100) if min_qty > 0 else 0
+                        status = f"🟡 Заканчивается ({pct:.0f}%)"
                         color = "#F39C12"
-                        bg_color = "#FDEBD0"
+                        bg = "#FDEBD0"
                     else:
-                        percentage = (qty / min_qty * 100) if min_qty > 0 else 0
-                        status = f"🟢 В достатке ({percentage:.0f}%)"
+                        pct = (qty / min_qty * 100) if min_qty > 0 else 0
+                        status = f"🟢 В достатке ({pct:.0f}%)"
                         color = "#27AE60"
-                        bg_color = "#D5F5E3"
+                        bg = "#D5F5E3"
                     
-                    # Заполняем ячейки
                     table.setItem(row_idx, 0, QTableWidgetItem(name))
                     table.setItem(row_idx, 1, QTableWidgetItem(category or "Без категории"))
                     table.setItem(row_idx, 2, QTableWidgetItem(f"{qty} {unit}"))
                     table.setItem(row_idx, 3, QTableWidgetItem(f"{min_qty} {unit}"))
                     
                     status_item = QTableWidgetItem(status)
-                    status_item.setForeground(Qt.white if qty <= min_qty else Qt.black)
-                    status_item.setBackground(Qt.white if qty == 0 else Qt.transparent)
+                    status_item.setForeground(QColor(color))
                     table.setItem(row_idx, 4, status_item)
                     
-                    # Устанавливаем цвет фона для всей строки
                     for col in range(5):
                         item = table.item(row_idx, col)
                         if item:
-                            item.setBackground(Qt.white if qty == 0 else 
-                                             QColor(bg_color) if qty <= min_qty * 1.5 else Qt.white)
-                            
+                            item.setBackground(QColor(bg))
         except Exception as e:
-            print(f"Ошибка при обновлении индикации: {e}")
+            print(f"Ошибка индикации: {e}")
+
+    def refresh_materials_info(self):
+        try:
+            query = """
+                SELECT m.id, m.name, c.name as category_name, m.quantity, m.unit, 
+                       m.min_quantity, m.price, m.supplier
+                FROM materials m
+                LEFT JOIN categories c ON m.category_id = c.id
+                ORDER BY m.name
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query)
+            materials = cursor.fetchall()
+            cursor.close()
+            conn.close()
             
-    def on_incoming_material_changed(self, index):
-        """Обработка изменения материала на вкладке Приход"""
-        if index >= 0 and index < len(self.materials_cache):
-            mat = self.materials_cache[index]
-            # Можно добавить дополнительную логику
+            self.materials_table.setRowCount(len(materials))
+            for row_idx, mat in enumerate(materials):
+                mat_id, name, cat, qty, unit, min_qty, price, supplier = mat
+                self.materials_table.setItem(row_idx, 0, QTableWidgetItem(str(mat_id)))
+                self.materials_table.setItem(row_idx, 1, QTableWidgetItem(name))
+                self.materials_table.setItem(row_idx, 2, QTableWidgetItem(cat or "Без категории"))
+                self.materials_table.setItem(row_idx, 3, QTableWidgetItem(str(qty)))
+                self.materials_table.setItem(row_idx, 4, QTableWidgetItem(unit))
+                self.materials_table.setItem(row_idx, 5, QTableWidgetItem(str(min_qty)))
+                self.materials_table.setItem(row_idx, 6, QTableWidgetItem(f"{price:.2f}" if price else "0.00"))
+                self.materials_table.setItem(row_idx, 7, QTableWidgetItem(supplier or "Не указан"))
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить материалы: {str(e)}")
+
+    def refresh_history(self):
+        try:
+            query = """
+                SELECT t.document_date, m.name as material_name, t.transaction_type, 
+                       t.quantity, t.document_number, u.full_name as user_name, t.notes
+                FROM transactions t
+                LEFT JOIN materials m ON t.material_id = m.id
+                LEFT JOIN users u ON t.user_id = u.id
+                ORDER BY t.created_at DESC
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query)
+            history = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            self.history_table.setRowCount(len(history))
+            for row_idx, rec in enumerate(history):
+                date, mat_name, type_, qty, doc, user, notes = rec
+                
+                type_text = "📥 Приход" if type_ == 'incoming' else "📤 Расход"
+                type_color = "#27AE60" if type_ == 'incoming' else "#E74C3C"
+                
+                self.history_table.setItem(row_idx, 0, QTableWidgetItem(
+                    date.strftime("%d.%m.%Y") if date else ""
+                ))
+                self.history_table.setItem(row_idx, 1, QTableWidgetItem(mat_name or "Удалён"))
+                
+                type_item = QTableWidgetItem(type_text)
+                type_item.setForeground(QColor(type_color))
+                self.history_table.setItem(row_idx, 2, type_item)
+                
+                self.history_table.setItem(row_idx, 3, QTableWidgetItem(str(qty)))
+                self.history_table.setItem(row_idx, 4, QTableWidgetItem(doc or "-"))
+                self.history_table.setItem(row_idx, 5, QTableWidgetItem(user or "Система"))
+                self.history_table.setItem(row_idx, 6, QTableWidgetItem(notes or ""))
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить историю: {str(e)}")
             
     def on_outgoing_material_changed(self, index):
-        """Обработка изменения материала на вкладке Расход"""
         if index >= 0 and index < len(self.materials_cache):
             mat = self.materials_cache[index]
             mat_id, name, qty, unit, min_qty, category = mat
             self.outgoing_available.setText(f"Доступно: {qty} {unit}")
             
     def add_incoming(self):
-        """Добавление прихода материала"""
         try:
-            # Получаем данные из формы
-            material_idx = self.incoming_material.currentIndex()
-            if material_idx < 0:
+            idx = self.incoming_material.currentIndex()
+            if idx < 0:
                 QMessageBox.warning(self, "Ошибка", "Выберите материал!")
                 return
-                
-            material_id = self.incoming_material.itemData(material_idx)
-            quantity = self.incoming_quantity.text().strip()
+            mat_id = self.incoming_material.itemData(idx)
+            qty_str = self.incoming_quantity.text().strip()
             supplier = self.incoming_supplier.currentText().strip()
-            doc_number = self.incoming_doc_number.text().strip()
+            doc_num = self.incoming_doc_number.text().strip()
             doc_date = self.incoming_doc_date.date().toPython()
             notes = self.incoming_notes.toPlainText().strip()
             
-            # Валидация
-            if not quantity:
-                QMessageBox.warning(self, "Ошибка", "Введите количество!")
+            if not qty_str or not doc_num:
+                QMessageBox.warning(self, "Ошибка", "Заполните количество и номер документа!")
                 return
                 
             try:
-                quantity = int(quantity)
-                if quantity <= 0:
-                    raise ValueError
-            except ValueError:
-                QMessageBox.warning(self, "Ошибка", "Количество должно быть положительным числом!")
+                quantity = int(qty_str)
+            except:
+                QMessageBox.warning(self, "Ошибка", "Количество должно быть числом!")
                 return
-                
-            if not doc_number:
-                QMessageBox.warning(self, "Ошибка", "Введите номер документа!")
+            if quantity <= 0:
+                QMessageBox.warning(self, "Ошибка", "Количество должно быть больше 0!")
                 return
             
-            # Получаем текущее количество материала
             conn = self.db.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT quantity FROM materials WHERE id = %s", (material_id,))
-            result = cursor.fetchone()
-            if not result:
+            cursor.execute("SELECT quantity FROM materials WHERE id = %s", (mat_id,))
+            res = cursor.fetchone()
+            if not res:
                 QMessageBox.critical(self, "Ошибка", "Материал не найден!")
                 cursor.close()
                 conn.close()
                 return
-                
-            current_qty = result[0]
-            new_qty = current_qty + quantity
             
-            # Начинаем транзакцию
+            new_qty = res[0] + quantity
             try:
-                # Обновляем количество материала
                 cursor.execute(
                     "UPDATE materials SET quantity = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (new_qty, material_id)
+                    (new_qty, mat_id)
                 )
-                
-                # Добавляем транзакцию
                 cursor.execute("""
                     INSERT INTO transactions 
                     (material_id, user_id, quantity, transaction_type, document_number, document_date, notes)
                     VALUES (%s, %s, %s, 'incoming', %s, %s, %s)
-                """, (material_id, self.user_data['id'], quantity, doc_number, doc_date, notes))
-                
+                """, (mat_id, self.user_data['id'], quantity, doc_num, doc_date, notes))
                 conn.commit()
                 
                 QMessageBox.information(
@@ -604,97 +725,77 @@ class MaterialFlowPage(QMainWindow):
                     f"Новый остаток: {new_qty}"
                 )
                 
-                # Очищаем форму и обновляем данные
                 self.incoming_quantity.clear()
                 self.incoming_doc_number.clear()
                 self.incoming_notes.clear()
                 self.load_combo_data()
-                self.refresh_materials_indicator()
-                
+                self.refresh_all_data()
             except Exception as e:
                 conn.rollback()
                 raise e
             finally:
                 cursor.close()
                 conn.close()
-                
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось провести приход: {str(e)}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка прихода: {str(e)}")
             
     def add_outgoing(self):
-        """Добавление расхода материала"""
         try:
-            # Получаем данные из формы
-            material_idx = self.outgoing_material.currentIndex()
-            if material_idx < 0:
+            idx = self.outgoing_material.currentIndex()
+            if idx < 0:
                 QMessageBox.warning(self, "Ошибка", "Выберите материал!")
                 return
-                
-            material_id = self.outgoing_material.itemData(material_idx)
-            quantity = self.outgoing_quantity.text().strip()
-            doc_number = self.outgoing_doc_number.text().strip()
+            mat_id = self.outgoing_material.itemData(idx)
+            qty_str = self.outgoing_quantity.text().strip()
+            doc_num = self.outgoing_doc_number.text().strip()
             doc_date = self.outgoing_doc_date.date().toPython()
             notes = self.outgoing_notes.toPlainText().strip()
             
-            # Валидация
-            if not quantity:
-                QMessageBox.warning(self, "Ошибка", "Введите количество!")
+            if not qty_str or not doc_num:
+                QMessageBox.warning(self, "Ошибка", "Заполните количество и номер документа!")
                 return
                 
             try:
-                quantity = int(quantity)
-                if quantity <= 0:
-                    raise ValueError
-            except ValueError:
-                QMessageBox.warning(self, "Ошибка", "Количество должно быть положительным числом!")
+                quantity = int(qty_str)
+            except:
+                QMessageBox.warning(self, "Ошибка", "Количество должно быть числом!")
                 return
-                
-            if not doc_number:
-                QMessageBox.warning(self, "Ошибка", "Введите номер документа!")
+            if quantity <= 0:
+                QMessageBox.warning(self, "Ошибка", "Количество должно быть больше 0!")
                 return
             
-            # Получаем текущее количество материала
             conn = self.db.get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT quantity FROM materials WHERE id = %s", (material_id,))
-            result = cursor.fetchone()
-            if not result:
+            cursor.execute("SELECT quantity FROM materials WHERE id = %s", (mat_id,))
+            res = cursor.fetchone()
+            if not res:
                 QMessageBox.critical(self, "Ошибка", "Материал не найден!")
                 cursor.close()
                 conn.close()
                 return
-                
-            current_qty = result[0]
             
-            # Проверка: нельзя списать больше, чем есть (максимум до 0)
-            if quantity > current_qty:
+            if quantity > res[0]:
                 QMessageBox.warning(
                     self, "Недостаточно материала",
-                    f"На складе доступно: {current_qty} шт\n"
+                    f"Доступно: {res[0]} шт\n"
                     f"Вы пытаетесь списать: {quantity} шт\n\n"
                     f"Нельзя уйти в минус!"
                 )
                 cursor.close()
                 conn.close()
                 return
-                
-            new_qty = current_qty - quantity
             
-            # Начинаем транзакцию
+            new_qty = res[0] - quantity
             try:
-                # Обновляем количество материала
                 cursor.execute(
                     "UPDATE materials SET quantity = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (new_qty, material_id)
+                    (new_qty, mat_id)
                 )
-                
-                # Добавляем транзакцию
                 cursor.execute("""
                     INSERT INTO transactions 
                     (material_id, user_id, quantity, transaction_type, document_number, document_date, notes)
                     VALUES (%s, %s, %s, 'outgoing', %s, %s, %s)
-                """, (material_id, self.user_data['id'], quantity, doc_number, doc_date, notes))
-                
+                """, (mat_id, self.user_data['id'], quantity, doc_num, doc_date, notes))
                 conn.commit()
                 
                 QMessageBox.information(
@@ -705,32 +806,26 @@ class MaterialFlowPage(QMainWindow):
                     f"Новый остаток: {new_qty}"
                 )
                 
-                # Очищаем форму и обновляем данные
                 self.outgoing_quantity.clear()
                 self.outgoing_doc_number.clear()
                 self.outgoing_notes.clear()
                 self.load_combo_data()
-                self.refresh_materials_indicator()
-                
+                self.refresh_all_data()
             except Exception as e:
                 conn.rollback()
                 raise e
             finally:
                 cursor.close()
                 conn.close()
-                
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось провести расход: {str(e)}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка расхода: {str(e)}")
             
     def go_back(self):
-        """Возврат к таблицам"""
         self.back_to_table.emit()
         self.close()
         
     def logout(self):
-        """Выход из аккаунта"""
         self.close()
         from .main_window import MainWindow
         self.main_window = MainWindow()
         self.main_window.show()
-
