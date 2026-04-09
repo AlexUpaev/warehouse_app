@@ -379,8 +379,16 @@ class SideMenu(QWidget):
             QMessageBox.critical(self, "Ошибка", f"Не удалось открыть профиль:\n{str(e)}")
     
     def open_materials_flow(self):
-        if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()
-        QMessageBox.information(self, "Приход/расход материала", "Страница находится в разработке")
+        if hasattr(self.parent_window, 'close_menu'): 
+            self.parent_window.close_menu()
+        try:
+            from .material_flow_page import MaterialFlowPage
+            self.material_flow_window = MaterialFlowPage(self.parent_window.user_data)
+            self.material_flow_window.back_to_table.connect(self.parent_window.show)
+            self.material_flow_window.show()
+            self.parent_window.hide()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть страницу: {str(e)}")
     
     def open_reports(self):
         if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()

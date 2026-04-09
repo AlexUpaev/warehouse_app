@@ -51,25 +51,6 @@ class ProfilePage(QMainWindow):
         top_layout = QHBoxLayout(top_panel)
         top_layout.setContentsMargins(10, 0, 20, 0)
 
-        self.menu_button = QPushButton("☰")
-        self.menu_button.setFixedSize(40, 40)
-        self.menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.menu_button.setStyleSheet(f"""
-            QPushButton {{ 
-                background-color: transparent; 
-                color: {self.PRIMARY_COLOR}; 
-                border: none; 
-                border-radius: 4px; 
-                font-size: 24px; 
-                font-weight: bold; 
-            }} 
-            QPushButton:hover {{ 
-                background-color: {self.PRIMARY_LIGHT}; 
-                color: {self.PRIMARY_DARK}; 
-            }}
-        """)
-        top_layout.addWidget(self.menu_button)
-
         back_button = QPushButton("← Назад к таблицам")
         back_button.setFixedSize(180, 36)
         back_button.setCursor(Qt.CursorShape.PointingHandCursor)
