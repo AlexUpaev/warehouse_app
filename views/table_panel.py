@@ -3,12 +3,13 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTableView, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QScrollArea, QStyledItemDelegate, QDateEdit, QDateTimeEdit
+    QScrollArea, QStyledItemDelegate
 )
 from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal, QPropertyAnimation, QEasingCurve, QModelIndex, QDate, QDateTime
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QValidator
 from datetime import date, datetime
 from database import Database
+from dateutil import tz
 
 TABLES = {
     "Пользователи": "users",
@@ -37,6 +38,45 @@ HEADERS = {
     ]
 }
 
+COLUMN_MAPPING = {
+    "users": {
+        "ID": "id", "Логин": "login", "ФИО": "full_name", "Email": "email",
+        "Роль": "role", "Активен": "is_active", "Создан": "created_at", "Последний вход": "last_login"
+    },
+    "categories": {
+        "ID": "id", "Название": "name", "Описание": "description", "Создана": "created_at"
+    },
+    "suppliers": {
+        "ID": "id", "Название": "name", "Контактное лицо": "contact_person",
+        "Телефон": "phone", "Email": "email", "Адрес": "address", "Создан": "created_at"
+    },
+    "materials": {
+        "ID": "id", "Наименование": "name", "Количество": "quantity", "Ед.": "unit",
+        "Цена (₽)": "price", "Мин. запас": "min_quantity", "Поставщик": "supplier",
+        "Описание": "description", "Категория": "category_name", "Создал": "created_by_name",
+        "Создан": "created_at", "Обновлен": "updated_at"
+    },
+    "transactions": {
+        "ID": "id", "Материал": "material_name", "Пользователь": "user_name",
+        "Количество": "quantity", "Тип": "transaction_type", "Документ": "document_number",
+        "Дата документа": "document_date", "Примечание": "notes", "Создана": "created_at"
+    },
+    "material_history": {
+        "ID": "id", "Материал": "material_name", "Было": "old_quantity", "Стало": "new_quantity",
+        "Разница": "difference", "Действие": "action_type", "Примечание": "notes",
+        "Изменил": "changed_by_name", "Время": "changed_at"
+    }
+}
+
+HIDDEN_FIELDS = {
+    "users": ["ID", "Создан", "Последний вход"],
+    "categories": ["ID", "Создана"],
+    "suppliers": ["ID", "Создан"],
+    "materials": ["ID", "Создал", "Создан", "Обновлен"],
+    "transactions": ["ID", "Создана"],
+    "material_history": ["ID", "Время"]
+}
+
 NUMERIC_COLUMNS = {
     "users": [0], "categories": [0], "suppliers": [0],
     "materials": [0, 2, 4, 5], "transactions": [0, 3], "material_history": [0, 2, 3, 4]
@@ -49,11 +89,32 @@ DATE_COLUMNS = {
 
 MAX_CELL_LENGTH = 60
 
+class PhoneValidator(QValidator):
+    def validate(self, text, pos):
+        if not text:
+            return QValidator.Intermediate, text, pos
+        digits = ''.join(filter(str.isdigit, text))
+        if len(digits) > 11:
+            return QValidator.Invalid, text, pos
+        return QValidator.Intermediate, text, pos
+
+class PriceValidator(QValidator):
+    def validate(self, text, pos):
+        if not text:
+            return QValidator.Intermediate, text, pos
+        try:
+            float(text.replace(',', '.'))
+            return QValidator.Acceptable, text, pos
+        except ValueError:
+            return QValidator.Invalid, text, pos
+
 class InputForm(QDialog):
-    def __init__(self, fields_or_values, parent=None):
+    def __init__(self, table_name, fields_or_values, parent=None):
         super().__init__(parent)
+        self.table_name = table_name
         form_layout = QFormLayout()
         self.setLayout(form_layout)
+        
         if isinstance(fields_or_values, list):
             fields = fields_or_values
             values = None
@@ -63,10 +124,23 @@ class InputForm(QDialog):
         else:
             raise TypeError("Неподдерживаемый тип аргумента.")
 
+        hidden = HIDDEN_FIELDS.get(table_name, [])
+        fields = [f for f in fields if f not in hidden]
+        
+        if table_name == "users" and values is None:
+            fields = [f for f in fields if f != "Пароль" and f != "Подтверждение пароля"]
+            try:
+                email_idx = fields.index("Email")
+                fields.insert(email_idx + 1, "Пароль")
+                fields.insert(email_idx + 2, "Подтверждение пароля")
+            except ValueError:
+                fields.extend(["Пароль", "Подтверждение пароля"])
+
         self.input_fields = {}
         placeholders = {
             "Логин": "Например: user123",
             "Пароль": "Минимум 6 символов",
+            "Подтверждение пароля": "Повторите пароль",
             "ФИО": "Иванов Иван Иванович",
             "Email": "user@example.com",
             "Роль": "admin, manager или user",
@@ -79,7 +153,6 @@ class InputForm(QDialog):
             "Описание": "Краткое описание товара",
             "Категория": "ID категории или название",
             "Название": "Например: Крепежные изделия",
-            "Описание": "Описание категории",
             "Телефон": "+7 (999) 123-45-67",
             "Адрес": "г. Москва, ул. Примерная, д. 1",
             "Контактное лицо": "Иванов Иван",
@@ -102,18 +175,37 @@ class InputForm(QDialog):
             "Изменил": "ID пользователя"
         }
 
-        for i, field in enumerate(fields):
+        masks = {
+            "Телефон": "+7 (000) 000-00-00",
+            "Дата документа": "00.00.0000",
+        }
+
+        for field in fields:
             label = QLabel(field)
             input_field = QLineEdit()
             
             if field in placeholders:
                 input_field.setPlaceholderText(placeholders[field])
             
+            if field in masks:
+                input_field.setInputMask(masks[field])
+            elif field == "Телефон":
+                input_field.setValidator(PhoneValidator())
+            elif field in ["Цена (₽)", "Было", "Стало", "Разница", "Количество", "Мин. запас"]:
+                input_field.setValidator(PriceValidator())
+            elif field in ["Пароль", "Подтверждение пароля"]:
+                input_field.setEchoMode(QLineEdit.Password)
+            
             if values:
                 value = values[field]
                 if value is not None:
                     if isinstance(value, (date, datetime)):
-                        input_field.setText(value.strftime("%d.%m.%Y %H:%M"))
+                        if isinstance(value, datetime) and value.tzinfo is not None:
+                            local_tz = tz.tzlocal()
+                            local_value = value.astimezone(local_tz)
+                        else:
+                            local_value = value
+                        input_field.setText(local_value.strftime("%d.%m.%Y %H:%M"))
                     else:
                         input_field.setText(str(value))
             
@@ -126,6 +218,20 @@ class InputForm(QDialog):
         form_layout.addRow(button_box)
 
     def validate_and_submit(self):
+        if self.table_name == "users":
+            password = self.input_fields.get("Пароль", QLineEdit()).text()
+            confirm = self.input_fields.get("Подтверждение пароля", QLineEdit()).text()
+            
+            if len(password) < 6:
+                QMessageBox.warning(self, "Ошибка", "Пароль должен быть не менее 6 символов")
+                return
+            if password != confirm:
+                QMessageBox.warning(self, "Ошибка", "Пароли не совпадают")
+                return
+            
+            if "Подтверждение пароля" in self.input_fields:
+                del self.input_fields["Подтверждение пароля"]
+        
         self.accept()
 
 class SortableHeaderView(QHeaderView):
@@ -169,7 +275,6 @@ class EditableItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, table_panel=None):
         super().__init__(parent)
         self.table_panel = table_panel
-        self.original_data = None
         
     def setEditorData(self, editor, index):
         value = index.model().data(index, Qt.EditRole)
@@ -503,6 +608,7 @@ class TablePanel(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, 'side_menu'): self.side_menu.setGeometry(-280, 0, 280, self.height())
         if hasattr(self, 'overlay'): self.overlay.setGeometry(0, 0, self.width(), self.height())
+        self._adjust_column_widths()
 
     def toggle_menu(self):
         if self.menu_opened: self.close_menu()
@@ -566,14 +672,57 @@ class TablePanel(QMainWindow):
     def reset_sort(self):
         self.proxy_model.sort(-1, Qt.AscendingOrder)
 
+    def _adjust_column_widths(self):
+        header = self.data_table.horizontalHeader()
+        if not header or header.count() == 0:
+            return
+        
+        for i in range(header.count()):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+            
+        total_width = sum(header.sectionSize(i) for i in range(header.count()))
+        viewport_width = self.data_table.viewport().width()
+        
+        if total_width < viewport_width:
+            header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
+
     def open_add_form(self):
         selected_table = TABLES[self.table_selector.currentText()]
-        dialog = InputForm(HEADERS[selected_table])
-        result = dialog.exec()
-        if result == QDialog.Accepted:
-            new_data = {field: dialog.input_fields[field].text() for field in dialog.input_fields}
-            self.db.insert_record(selected_table, new_data)
-            self.reload_current_table()
+        dialog = InputForm(selected_table, HEADERS[selected_table])
+        if dialog.exec() == QDialog.Accepted:
+            rus_data = {field: dialog.input_fields[field].text() for field in dialog.input_fields}
+            eng_data = {}
+            mapping = COLUMN_MAPPING.get(selected_table, {})
+
+            for rus_key, value in rus_data.items():
+                if rus_key in HIDDEN_FIELDS.get(selected_table, []):
+                    continue
+
+                eng_key = mapping.get(rus_key, rus_key.lower().replace(" ", "_"))
+
+                if rus_key == "Пароль":
+                    from utils.password_helper import PasswordHelper
+                    eng_data['password_hash'] = PasswordHelper.hash_password(value)
+                elif rus_key == "Активен":
+                    eng_data[eng_key] = value.strip().lower() in ('true', '1', 'да', 'yes')
+                elif not value or value.strip() == '':
+                    eng_data[eng_key] = None
+                else:
+                    if rus_key in ["Количество", "Мин. запас"]:
+                        try: eng_data[eng_key] = int(value)
+                        except: eng_data[eng_key] = value
+                    elif rus_key == "Цена (₽)":
+                        try: eng_data[eng_key] = float(value.replace(',', '.'))
+                        except: eng_data[eng_key] = value
+                    else:
+                        eng_data[eng_key] = value
+
+            try:
+                self.db.insert_record(selected_table, eng_data)
+                QMessageBox.information(self, "Успешно", "Запись добавлена!")
+                self.reload_current_table()
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить запись:\n{str(e)}")
 
     def save_cell_change(self, index, old_value, new_value):
         row = index.row()
@@ -582,12 +731,23 @@ class TablePanel(QMainWindow):
         model = self.data_table.model()
         
         record_id = model.index(row, 0).data()
-        field_name = HEADERS[table_name][col]
+        header_name = HEADERS[table_name][col]
+        db_column = COLUMN_MAPPING[table_name].get(header_name, header_name.lower().replace(" ", "_"))
         
+        if header_name in ["Количество", "Мин. запас", "ID"]:
+            try: new_value = int(new_value)
+            except: pass
+        elif header_name == "Цена (₽)":
+            try: new_value = float(str(new_value).replace(',', '.'))
+            except: pass
+        elif header_name == "Активен":
+            new_value = str(new_value).lower() in ('true', '1', 'да', 'yes')
+
         try:
-            updated_data = {field_name: new_value}
+            updated_data = {db_column: new_value}
             self.db.update_record(table_name, record_id, updated_data)
-            QMessageBox.information(self, "Успешно", "Изменения сохранены!")
+            QMessageBox.information(self, "Успешно", "Изменения сохранены в базе данных!")
+            self.reload_current_table()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить изменения:\n{str(e)}")
             model.setData(index, old_value, Qt.DisplayRole)
@@ -650,29 +810,46 @@ class TablePanel(QMainWindow):
             model.setHorizontalHeaderLabels(headers)
 
             for row_idx, row in enumerate(rows):
-                for col_idx, value in enumerate(row.values()):
-                    text = str(value) if value is not None else ""
-                    if len(text) > MAX_CELL_LENGTH: text = text[:MAX_CELL_LENGTH - 1] + "…"
-                    item = QStandardItem(text)
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                row_values = list(row.values())
+                for col_idx in range(len(headers)):
+                    value = row_values[col_idx] if col_idx < len(row_values) else None
                     
+                    item = QStandardItem()
+                    
+                    # ✅ ПРОСТОЙ И НАДЁЖНЫЙ ПОДХОД
+                    if value is None:
+                        display_text = ""
+                    elif isinstance(value, datetime):
+                        if value.tzinfo is not None:
+                            local_value = value.astimezone(tz.tzlocal())
+                        else:
+                            local_value = value
+                        display_text = local_value.strftime("%d.%m.%Y %H:%M")
+                    elif isinstance(value, date):
+                        display_text = value.strftime("%d.%m.%Y")
+                    elif isinstance(value, bool):
+                        display_text = "true" if value else "false"
+                    else:
+                        text = str(value)
+                        if len(text) > MAX_CELL_LENGTH:
+                            text = text[:MAX_CELL_LENGTH - 1] + "…"
+                        display_text = text
+                    
+                    # ✅ УСТАНАВЛИВАЕМ ТЕКСТ И ДАННЫЕ
+                    item.setText(display_text)
+                    item.setData(display_text, Qt.ItemDataRole.DisplayRole)
+                    item.setData(display_text, Qt.ItemDataRole.EditRole)
+                    
+                    # Выравнивание для чисел
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                        item.setData(value, Qt.DisplayRole)
-                        item.setData(value, Qt.EditRole)
-                    elif isinstance(value, (date, datetime)):
-                        formatted_date = value.strftime("%d.%m.%Y %H:%M")
-                        item.setData(formatted_date, Qt.DisplayRole)
-                        item.setData(value, Qt.UserRole)
-                        item.setData(value, Qt.EditRole)
                     else:
-                        item.setData(text, Qt.DisplayRole)
-                        item.setData(text, Qt.EditRole)
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    
                     model.setItem(row_idx, col_idx, item)
 
             header = self.data_table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-            if header.count() > 0: header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
+            self._adjust_column_widths()
 
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
@@ -686,7 +863,9 @@ class TablePanel(QMainWindow):
             self.reset_sort()
 
         except Exception as e:
-            print(f"Ошибка при загрузке таблицы '{table_name}': {e}")
+            print(f"❌ Ошибка при загрузке таблицы '{table_name}': {e}")
+            import traceback
+            traceback.print_exc()
             error_model = QStandardItemModel(1, 1)
             error_model.setHorizontalHeaderLabels(["Ошибка"])
             error_model.setItem(0, 0, QStandardItem(str(e)))
