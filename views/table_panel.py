@@ -391,8 +391,16 @@ class SideMenu(QWidget):
             QMessageBox.critical(self, "Ошибка", f"Не удалось открыть страницу: {str(e)}")
     
     def open_reports(self):
-        if hasattr(self.parent_window, 'close_menu'): self.parent_window.close_menu()
-        QMessageBox.information(self, "Отчёты по стройкам", "Страница находится в разработке")
+        if hasattr(self.parent_window, 'close_menu'): 
+            self.parent_window.close_menu()
+        try:
+            from .reports_page import ReportsPage
+            self.reports_window = ReportsPage(self.parent_window.user_data)
+            self.reports_window.back_to_table.connect(self.parent_window.show)
+            self.reports_window.show()
+            self.parent_window.hide()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось открыть отчёты: {str(e)}")
 
 class TablePanel(QMainWindow):
     def __init__(self, user_data):
