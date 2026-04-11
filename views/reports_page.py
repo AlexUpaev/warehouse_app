@@ -3,7 +3,7 @@ import sys
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTabWidget, QGroupBox, QFrame, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QGridLayout  # ✅ ДОБАВЛЕНО
+    QHeaderView, QMessageBox, QGridLayout
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
@@ -24,7 +24,7 @@ except ImportError:
 class ReportsPage(QMainWindow):
     back_to_table = Signal()
     
-    # Цвета (как в профиле и приходе)
+    # Цвета
     PRIMARY_COLOR = "#1A529C"
     PRIMARY_DARK = "#0d47a1"
     PRIMARY_LIGHT = "#E3F2FD"
@@ -133,11 +133,10 @@ class ReportsPage(QMainWindow):
         layout.addWidget(header)
         
         # Сетка карточек
-        cards_layout = QGridLayout()  # ✅ ТЕПЕРЬ РАБОТАЕТ
+        cards_layout = QGridLayout()
         cards_layout.setSpacing(15)
         
         self.cards = {}
-        # Конфигурация карточек: (Название, ID переменной, Цвет)
         card_configs = [
             ("💰 Общая стоимость", "total_value", self.PRIMARY_COLOR),
             ("📦 Всего позиций", "total_items", self.INFO_COLOR),
@@ -170,7 +169,7 @@ class ReportsPage(QMainWindow):
             return
             
         # График приходов/расходов
-        flow_group = QGroupBox("📈 Динамика приходов и расходов (последние 6 месяцев)")
+        flow_group = QGroupBox("📈 Динамика приходов и расходов")
         flow_group.setStyleSheet(self._group_box_style())
         flow_layout = QVBoxLayout(flow_group)
         self.flow_canvas = self._create_matplotlib_canvas()
@@ -182,7 +181,20 @@ class ReportsPage(QMainWindow):
         cat_group.setStyleSheet(self._group_box_style())
         cat_layout = QVBoxLayout(cat_group)
         self.cat_canvas = self._create_matplotlib_canvas()
+        self.cat_placeholder = QLabel()
+        self.cat_placeholder.setAlignment(Qt.AlignCenter)
+        self.cat_placeholder.setStyleSheet("""
+            QLabel { 
+                color: #7F8C8D; 
+                font-size: 14px; 
+                padding: 40px;
+                background: #FAFAFA;
+                border: 2px dashed #BDC3C7;
+                border-radius: 8px;
+            }
+        """)
         cat_layout.addWidget(self.cat_canvas)
+        cat_layout.addWidget(self.cat_placeholder)
         layout.addWidget(cat_group, 1)
         
     def setup_stock_tab(self):
@@ -284,61 +296,114 @@ class ReportsPage(QMainWindow):
             conn = self.db.get_connection()
             cursor = conn.cursor()
             
-            # Данные за последние 6 месяцев
+            # Получаем текущую дату
+            today = date.today()
+            
+            # Данные за последние 30 дней (по дням), но не дальше текущей даты
             cursor.execute("""
-                SELECT DATE_TRUNC('month', document_date) as month, transaction_type, COALESCE(SUM(quantity), 0)
+                SELECT DATE(document_date) as day, transaction_type, COALESCE(SUM(quantity), 0)
                 FROM transactions
-                WHERE document_date >= CURRENT_DATE - INTERVAL '6 months'
-                GROUP BY month, transaction_type ORDER BY month
+                WHERE document_date >= CURRENT_DATE - INTERVAL '30 days'
+                AND document_date <= CURRENT_DATE
+                GROUP BY day, transaction_type 
+                ORDER BY day
             """)
             rows = cursor.fetchall()
             
-            months = []
+            days = []
             incoming = []
             outgoing = []
             
             if rows:
-                # Обработка данных для графика
-                for m, t, q in rows:
-                    m_str = m.strftime("%b %Y")
-                    if m_str not in months:
-                        months.append(m_str)
-                        incoming.append(0)
-                        outgoing.append(0)
-                    idx = months.index(m_str)
-                    if t == 'incoming': incoming[idx] = q
-                    elif t == 'outgoing': outgoing[idx] = q
-                    
-                # Рисуем график 1
+                # Создаем словарь для удобного доступа
+                data_dict = {}
+                for day, t, q in rows:
+                    # Фильтруем даты - показываем только до сегодня включительно
+                    if day <= today:
+                        day_str = day.strftime("%d.%m")
+                        if day_str not in data_dict:
+                            data_dict[day_str] = {'incoming': 0, 'outgoing': 0}
+                        data_dict[day_str][t] = q
+                
+                # Преобразуем в списки для графика
+                days = sorted(data_dict.keys())
+                incoming = [data_dict[d]['incoming'] for d in days]
+                outgoing = [data_dict[d]['outgoing'] for d in days]
+                
+                # Очищаем и рисуем график
+                self.flow_canvas.figure.clear()
                 ax1 = self.flow_canvas.figure.subplots()
-                ax1.plot(months, incoming, marker='o', color=self.SUCCESS_COLOR, label='Приход')
-                ax1.plot(months, outgoing, marker='s', color=self.DANGER_COLOR, label='Расход')
-                ax1.set_title("Движение материалов")
-                ax1.legend()
+                
+                x = range(len(days))
+                ax1.plot(x, incoming, marker='o', color=self.SUCCESS_COLOR, label='Приход', linewidth=2)
+                ax1.plot(x, outgoing, marker='s', color=self.DANGER_COLOR, label='Расход', linewidth=2)
+                
+                ax1.set_title("Движение материалов (последние 30 дней)", fontsize=12, fontweight='bold')
+                ax1.set_xticks(x)
+                ax1.set_xticklabels(days, rotation=45, ha='right')
+                ax1.legend(loc='upper right')
                 ax1.grid(True, linestyle='--', alpha=0.5)
+                ax1.set_ylabel('Количество')
+                
+                # Добавляем подписи значений на график
+                for i, (inc, out) in enumerate(zip(incoming, outgoing)):
+                    if inc > 0:
+                        ax1.annotate(f'{inc}', (i, inc), textcoords="offset points", xytext=(0,5), ha='center', fontsize=8)
+                    if out > 0:
+                        ax1.annotate(f'{out}', (i, out), textcoords="offset points", xytext=(0,-10), ha='center', fontsize=8)
+                
+                self.flow_canvas.figure.tight_layout()
+                self.flow_canvas.draw()
+            else:
+                # Если нет данных за 30 дней
+                self.flow_canvas.figure.clear()
+                ax1 = self.flow_canvas.figure.subplots()
+                ax1.text(0.5, 0.5, 'Нет данных за последние 30 дней', 
+                        ha='center', va='center', transform=ax1.transAxes, fontsize=12)
+                ax1.axis('off')
                 self.flow_canvas.draw()
             
-            # График 2: Категории
+            # ✅ График 2: Категории - ИСПРАВЛЕННЫЙ ЗАПРОС
+            # Используем подзапрос, чтобы избежать ошибки с алиасом в HAVING
             cursor.execute("""
-                SELECT c.name, COALESCE(SUM(m.quantity * m.price), 0) as val
-                FROM categories c LEFT JOIN materials m ON m.category_id = c.id
-                GROUP BY c.id, c.name HAVING val > 0 ORDER BY val DESC
+                SELECT name, total_val
+                FROM (
+                    SELECT c.name, COALESCE(SUM(m.quantity * m.price), 0) as total_val
+                    FROM categories c 
+                    LEFT JOIN materials m ON m.category_id = c.id
+                    GROUP BY c.id, c.name
+                ) as subquery
+                WHERE total_val > 0
+                ORDER BY total_val DESC
             """)
             cat_data = cursor.fetchall()
+            
+            # Очищаем фигуру перед рисованием
+            self.cat_canvas.figure.clear()
             
             if cat_data:
                 labels = [c[0] or "Другое" for c in cat_data]
                 sizes = [c[1] for c in cat_data]
                 
                 ax2 = self.cat_canvas.figure.subplots()
-                ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
-                ax2.set_title("Стоимость по категориям")
+                # Красивые цвета для диаграммы
+                colors = ['#3498DB', '#2ECC71', '#E74C3C', '#F39C12', '#9B59B6', '#1ABC9C', '#E67E22', '#34495E']
+                ax2.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors[:len(labels)])
+                ax2.set_title("Стоимость по категориям", fontsize=12, fontweight='bold')
                 self.cat_canvas.draw()
+                self.cat_placeholder.hide()
+            else:
+                ax2 = self.cat_canvas.figure.subplots()
+                ax2.axis('off')
+                self.cat_placeholder.setText("📊 Нет данных для отображения\n\nДобавьте материалы с указанием категории и цены")
+                self.cat_placeholder.show()
                 
             cursor.close()
             conn.close()
         except Exception as e:
             print(f"Ошибка графиков: {e}")
+            import traceback
+            traceback.print_exc()
             
     def load_critical_stock_data(self):
         try:
