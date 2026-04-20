@@ -1,15 +1,25 @@
 import sys
+import os
+from datetime import date, datetime
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTableView, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QScrollArea, QStyledItemDelegate
+    QScrollArea, QStyledItemDelegate, QFileDialog, QCheckBox, QGroupBox, QRadioButton,
+    QButtonGroup, QProgressBar, QFrame
 )
 from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, QPoint, Signal, QPropertyAnimation, QEasingCurve, QModelIndex, QDate, QDateTime
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QValidator
-from datetime import date, datetime
+
 from database import Database
 from dateutil import tz
+
+# ============================================================================
+# КОНСТАНТЫ И МАППИНГИ
+# ============================================================================
 
 TABLES = {
     "Пользователи": "users",
@@ -89,6 +99,10 @@ DATE_COLUMNS = {
 
 MAX_CELL_LENGTH = 60
 
+# ============================================================================
+# ВАЛИДАТОРЫ
+# ============================================================================
+
 class PhoneValidator(QValidator):
     def validate(self, text, pos):
         if not text:
@@ -107,6 +121,10 @@ class PriceValidator(QValidator):
             return QValidator.Acceptable, text, pos
         except ValueError:
             return QValidator.Invalid, text, pos
+
+# ============================================================================
+# ДИАЛОГ ВВОДА ДАННЫХ
+# ============================================================================
 
 class InputForm(QDialog):
     def __init__(self, table_name, fields_or_values, parent=None):
@@ -234,6 +252,10 @@ class InputForm(QDialog):
         
         self.accept()
 
+# ============================================================================
+# КАСТОМНЫЕ ВИДЖЕТЫ ТАБЛИЦЫ
+# ============================================================================
+
 class SortableHeaderView(QHeaderView):
     sortRequested = Signal(int, bool)
     def __init__(self, orientation, parent=None):
@@ -301,6 +323,10 @@ class EditableItemDelegate(QStyledItemDelegate):
                         self.table_panel.save_cell_change(index, old_value, new_value)
                 else:
                     editor.setText(str(old_value))
+
+# ============================================================================
+# БОКОВОЕ МЕНЮ
+# ============================================================================
 
 class SideMenu(QWidget):
     def __init__(self, parent=None):
@@ -402,6 +428,585 @@ class SideMenu(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось открыть отчёты: {str(e)}")
 
+# ============================================================================
+# ХЕЛПЕР ЭКСПОРТА/ИМПОРТА (встроенный) - ИСПРАВЛЕННЫЙ
+# ============================================================================
+
+class ExportImportHelper:
+    """Класс для экспорта и импорта данных"""
+    
+    @staticmethod
+    def convert_value(value):
+        """Конвертирует значение для экспорта"""
+        if value is None:
+            return ""
+        elif isinstance(value, datetime):
+            if value.tzinfo is not None:
+                value = value.astimezone(tz.tzlocal())
+            return value.strftime("%d.%m.%Y %H:%M")
+        elif isinstance(value, date):
+            return value.strftime("%d.%m.%Y")
+        elif isinstance(value, bool):
+            return "Да" if value else "Нет"
+        return str(value)
+    
+    @staticmethod
+    def export_to_xlsx(db, tables_to_export: Dict[str, str], filepath: str) -> bool:
+        """Экспорт в Excel: каждая таблица — отдельный лист"""
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+            
+            wb = Workbook()
+            if 'Sheet' in wb.sheetnames:
+                del wb['Sheet']
+            
+            header_font = Font(bold=True, color="FFFFFF", size=11)
+            header_fill = PatternFill(start_color="1A529C", end_color="1A529C", fill_type="solid")
+            cell_border = Border(
+                left=Side(style='thin', color='CCCCCC'),
+                right=Side(style='thin', color='CCCCCC'),
+                top=Side(style='thin', color='CCCCCC'),
+                bottom=Side(style='thin', color='CCCCCC')
+            )
+            header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            cell_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            
+            for display_name, table_name in tables_to_export.items():
+                rows = db.get_table_data(table_name)
+                if not rows:
+                    continue
+                
+                ws = wb.create_sheet(title=display_name[:31])
+                headers = list(rows[0].keys())
+                
+                ws.append(headers)
+                for col_idx in range(1, len(headers) + 1):
+                    cell = ws.cell(row=1, column=col_idx)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.border = cell_border
+                    cell.alignment = header_align
+                
+                for row in rows:
+                    row_values = [ExportImportHelper.convert_value(row.get(h)) for h in headers]
+                    ws.append(row_values)
+                    for col_idx in range(1, len(headers) + 1):
+                        cell = ws.cell(row=ws.max_row, column=col_idx)
+                        cell.border = cell_border
+                        cell.alignment = cell_align
+                
+                for col_idx, header in enumerate(headers, 1):
+                    max_len = max(len(str(header)), max((len(str(ExportImportHelper.convert_value(r.get(header)))) for r in rows), default=0))
+                    ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 50)
+            
+            wb.save(filepath)
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка экспорта XLSX: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    @staticmethod
+    def export_to_pdf(db, tables_to_export: Dict[str, str], filepath: str) -> bool:
+        """Экспорт в PDF с поддержкой кириллицы — ИСПРАВЛЕНО"""
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            
+            # Регистрируем Arial (обычный и жирный)
+            font_name = 'Helvetica'
+            font_name_bold = 'Helvetica-Bold'
+            
+            try:
+                # Пробуем зарегистрировать Arial
+                arial_regular = r"C:\Windows\Fonts\arial.ttf"
+                arial_bold = r"C:\Windows\Fonts\arialbd.ttf"
+                
+                if os.path.exists(arial_regular):
+                    pdfmetrics.registerFont(TTFont('Arial', arial_regular))
+                    font_name = 'Arial'
+                    
+                    if os.path.exists(arial_bold):
+                        pdfmetrics.registerFont(TTFont('Arial-Bold', arial_bold))
+                        font_name_bold = 'Arial-Bold'
+                    else:
+                        # Если жирного Arial нет, используем Helvetica-Bold
+                        font_name_bold = 'Helvetica-Bold'
+            except Exception as e:
+                print(f"⚠️ Не удалось зарегистрировать шрифт Arial: {e}")
+                # Оставляем Helvetica по умолчанию
+            
+            doc = SimpleDocTemplate(filepath, pagesize=landscape(A4), 
+                                    rightMargin=20, leftMargin=20, 
+                                    topMargin=20, bottomMargin=20)
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Стили с правильными именами шрифтов
+            title_style = ParagraphStyle(
+                'Title', 
+                parent=styles['Heading1'], 
+                fontSize=16, 
+                textColor=colors.HexColor('#1A529C'), 
+                alignment=1, 
+                spaceAfter=10,
+                fontName=font_name_bold  # ✅ Используем правильное имя жирного шрифта
+            )
+            
+            cell_style = ParagraphStyle(
+                'Cell', 
+                parent=styles['Normal'], 
+                fontSize=8,
+                fontName=font_name  # ✅ Используем правильное имя обычного шрифта
+            )
+            
+            for display_name, table_name in tables_to_export.items():
+                rows = db.get_table_data(table_name)
+                if not rows:
+                    continue
+                
+                elements.append(Paragraph(display_name, title_style))
+                elements.append(Spacer(1, 8))
+                
+                headers = list(rows[0].keys())
+                table_data = [headers]
+                
+                for row in rows:
+                    row_vals = []
+                    for h in headers:
+                        val = str(ExportImportHelper.convert_value(row.get(h)))[:60]
+                        row_vals.append(Paragraph(val, cell_style))
+                    table_data.append(row_vals)
+                
+                # Динамическая ширина колонок
+                num_cols = len(headers)
+                col_width = (landscape(A4)[0] - 40) / num_cols
+                table = Table(table_data, colWidths=[col_width]*num_cols)
+                
+                # ✅ ИСПРАВЛЕНО: используем font_name_bold вместо конкатенации
+                table.setStyle(TableStyle([
+                    # Заголовок таблицы
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1A529C')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                    ('ALIGN', (0,0), (-1,0), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), font_name_bold),  # ✅ Правильное имя
+                    ('FONTSIZE', (0,0), (-1,0), 9),
+                    ('BOTTOMPADDING', (0,0), (-1,0), 8),
+                    
+                    # Данные
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#FAFAFA')]),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 3),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 3),
+                    ('TOPPADDING', (0,0), (-1,-1), 3),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                ]))
+                
+                elements.append(table)
+                elements.append(Spacer(1, 20))
+                elements.append(PageBreak())
+            
+            # Удаляем последний PageBreak
+            if elements and isinstance(elements[-1], PageBreak):
+                elements.pop()
+            
+            doc.build(elements)
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка экспорта PDF: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    @staticmethod
+    def import_from_xlsx(db, table_name: str, filepath: str, skip_duplicates: bool = True) -> Dict[str, Any]:
+        """Импорт из Excel с проверкой схемы БД — ИСПРАВЛЕНО"""
+        stats = {'total': 0, 'imported': 0, 'skipped': 0, 'errors': 0, 'error_messages': []}
+        
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(filepath)
+            ws = wb.active
+            excel_headers = [cell.value for cell in ws[1] if cell.value]
+            
+            # ✅ 1. Получаем реальные колонки из БД
+            valid_columns = []
+            try:
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = %s AND table_schema = 'public'
+                """, (table_name,))
+                valid_columns = [row[0] for row in cursor.fetchall()]
+                cursor.close()
+                conn.close()
+            except Exception as e:
+                stats['error_messages'].append(f"Не удалось прочитать схему БД: {e}")
+                return stats
+
+            # ✅ 2. Исключаем авто-поля
+            auto_fields = ['id', 'created_at', 'updated_at', 'last_login', 'changed_at']
+            importable_columns = [c for c in valid_columns if c not in auto_fields]
+            
+            # ✅ 3. Создаём маппинг: только существующие колонки
+            column_map = {}
+            for h in excel_headers:
+                if h and h in importable_columns:
+                    column_map[h] = h
+                elif h and h.lower() in importable_columns:
+                    column_map[h] = h.lower()
+
+            if not column_map:
+                stats['error_messages'].append("Нет совпадающих колонок между файлом и таблицей БД")
+                return stats
+
+            # ✅ 4. Проверка дубликатов
+            existing = set()
+            if skip_duplicates and table_name in ['materials', 'users', 'categories']:
+                unique_field = {'materials': 'name', 'users': 'login', 'categories': 'name'}.get(table_name)
+                if unique_field and unique_field in importable_columns:
+                    try:
+                        conn = db.get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(f"SELECT {unique_field} FROM {table_name}")
+                        existing = {str(row[0]).lower() for row in cursor.fetchall()}
+                        cursor.close()
+                        conn.close()
+                    except: pass
+
+            # ✅ 5. Обработка строк
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+                stats['total'] += 1
+                if all(v is None for v in row):
+                    stats['skipped'] += 1
+                    continue
+                
+                record = {}
+                for col_idx, value in enumerate(row):
+                    if col_idx < len(excel_headers) and excel_headers[col_idx] in column_map:
+                        db_col = column_map[excel_headers[col_idx]]
+                        if value is not None and str(value).strip():
+                            if db_col in ['quantity', 'min_quantity', 'old_quantity', 'new_quantity', 'difference']:
+                                try: value = int(float(str(value).replace(',', '.')))
+                                except: pass
+                            elif db_col == 'price':
+                                try: value = float(str(value).replace(',', '.'))
+                                except: pass
+                            elif db_col == 'is_active':
+                                value = str(value).lower() in ('true', '1', 'да', 'yes')
+                            record[db_col] = value
+
+                # Проверка дубликата
+                if skip_duplicates and record:
+                    unique_field = {'materials': 'name', 'users': 'login', 'categories': 'name'}.get(table_name)
+                    if unique_field and unique_field in record:
+                        if str(record[unique_field]).lower() in existing:
+                            stats['skipped'] += 1
+                            continue
+
+                # Вставка
+                if record:
+                    try:
+                        db.insert_record(table_name, record)
+                        stats['imported'] += 1
+                        if skip_duplicates and unique_field and unique_field in record:
+                            existing.add(str(record[unique_field]).lower())
+                    except Exception as e:
+                        stats['errors'] += 1
+                        stats['error_messages'].append(f"Строка {row_idx}: {str(e)[:80]}")
+
+            return stats
+        except Exception as e:
+            stats['errors'] += 1
+            stats['error_messages'].append(str(e))
+            import traceback
+            traceback.print_exc()
+            return stats
+
+# ============================================================================
+# ДИАЛОГ ЭКСПОРТА/ИМПОРТА
+# ============================================================================
+
+class ExportImportDialog(QDialog):
+    def __init__(self, parent=None, db=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Экспорт/Импорт данных")
+        self.setModal(True)
+        self.setMinimumSize(650, 550)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Заголовок
+        title = QLabel("📤 Экспорт и 📥 Импорт данных")
+        title.setFont(QFont('Segoe UI', 16, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1A529C;")
+        layout.addWidget(title)
+        
+        # Режим
+        mode_group = QGroupBox("Режим работы")
+        mode_layout = QHBoxLayout(mode_group)
+        self.export_radio = QRadioButton("Экспорт данных")
+        self.import_radio = QRadioButton("Импорт данных")
+        self.export_radio.setChecked(True)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.export_radio)
+        self.mode_group.addButton(self.import_radio)
+        mode_layout.addWidget(self.export_radio)
+        mode_layout.addWidget(self.import_radio)
+        mode_layout.addStretch()
+        layout.addWidget(mode_group)
+        
+        # Контент
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.setup_export_ui()
+        self.setup_import_ui()
+        self.import_widget.setVisible(False)
+        
+        layout.addWidget(self.content_widget)
+        
+        # Прогресс
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
+        # Кнопки
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.execute_btn = QPushButton("Экспортировать")
+        self.execute_btn.setMinimumHeight(40)
+        self.execute_btn.setStyleSheet("""
+            QPushButton { background-color: #1A529C; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; padding: 8px 20px; }
+            QPushButton:hover { background-color: #164786; }
+        """)
+        self.execute_btn.clicked.connect(self.execute)
+        btn_layout.addWidget(self.execute_btn)
+        
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setMinimumHeight(40)
+        cancel_btn.setStyleSheet("""
+            QPushButton { background-color: #6C757D; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; padding: 8px 20px; }
+            QPushButton:hover { background-color: #5A6268; }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(btn_layout)
+        self.export_radio.toggled.connect(self.on_mode_changed)
+    
+    def setup_export_ui(self):
+        self.export_widget = QWidget()
+        exp_layout = QVBoxLayout(self.export_widget)
+        exp_layout.setContentsMargins(0, 0, 0, 0)
+        exp_layout.setSpacing(10)
+        
+        # Таблицы
+        tables_group = QGroupBox("Выберите таблицы для экспорта")
+        tables_layout = QVBoxLayout(tables_group)
+        
+        select_all_layout = QHBoxLayout()
+        self.select_all_cb = QCheckBox("✅ Выбрать все таблицы")
+        self.select_all_cb.setChecked(True)
+        self.select_all_cb.stateChanged.connect(self.on_select_all)
+        select_all_layout.addWidget(self.select_all_cb)
+        select_all_layout.addStretch()
+        tables_layout.addLayout(select_all_layout)
+        
+        self.table_cbs = {}
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(200)
+        cb_container = QWidget()
+        cb_layout = QVBoxLayout(cb_container)
+        cb_layout.setContentsMargins(5, 5, 5, 5)
+        
+        for name in TABLES.keys():
+            cb = QCheckBox(name)
+            cb.setChecked(True)
+            self.table_cbs[name] = cb
+            cb_layout.addWidget(cb)
+        cb_layout.addStretch()
+        scroll.setWidget(cb_container)
+        tables_layout.addWidget(scroll)
+        exp_layout.addWidget(tables_group)
+        
+        # Формат
+        fmt_group = QGroupBox("Формат файла")
+        fmt_layout = QVBoxLayout(fmt_group)
+        self.xlsx_radio = QRadioButton("Excel (.xlsx) — рекомендуется")
+        self.pdf_radio = QRadioButton("PDF (.pdf) — для печати")
+        self.xlsx_radio.setChecked(True)
+        fmt_layout.addWidget(self.xlsx_radio)
+        fmt_layout.addWidget(self.pdf_radio)
+        exp_layout.addWidget(fmt_group)
+        
+        # Файл
+        file_group = QGroupBox("Сохранить как")
+        file_layout = QHBoxLayout(file_group)
+        self.file_label = QLabel("Не выбрано")
+        self.file_label.setStyleSheet("color: #666;")
+        file_layout.addWidget(self.file_label, 1)
+        browse_btn = QPushButton("Обзор...")
+        browse_btn.setStyleSheet("QPushButton { background-color: #17A2B8; color: white; border: none; border-radius: 4px; padding: 6px 12px; } QPushButton:hover { background-color: #138496; }")
+        browse_btn.clicked.connect(self.browse_export)
+        file_layout.addWidget(browse_btn)
+        exp_layout.addWidget(file_group)
+        exp_layout.addStretch()
+        
+        self.content_layout.addWidget(self.export_widget)
+    
+    def setup_import_ui(self):
+        self.import_widget = QWidget()
+        imp_layout = QVBoxLayout(self.import_widget)
+        imp_layout.setContentsMargins(0, 0, 0, 0)
+        imp_layout.setSpacing(10)
+        
+        # Файл
+        file_group = QGroupBox("Файл для импорта (.xlsx)")
+        file_layout = QHBoxLayout(file_group)
+        self.import_file_label = QLabel("Не выбрано")
+        self.import_file_label.setStyleSheet("color: #666;")
+        file_layout.addWidget(self.import_file_label, 1)
+        browse_btn = QPushButton("Обзор...")
+        browse_btn.setStyleSheet("QPushButton { background-color: #17A2B8; color: white; border: none; border-radius: 4px; padding: 6px 12px; } QPushButton:hover { background-color: #138496; }")
+        browse_btn.clicked.connect(self.browse_import)
+        file_layout.addWidget(browse_btn)
+        imp_layout.addWidget(file_group)
+        
+        # Таблица
+        table_group = QGroupBox("Целевая таблица")
+        table_layout = QVBoxLayout(table_group)
+        self.import_table_combo = QComboBox()
+        self.import_table_combo.addItems(TABLES.keys())
+        table_layout.addWidget(self.import_table_combo)
+        imp_layout.addWidget(table_group)
+        
+        # Опции
+        opts_group = QGroupBox("Настройки")
+        opts_layout = QVBoxLayout(opts_group)
+        self.skip_dup_cb = QCheckBox("⚡ Пропускать дубликаты (по уникальным полям)")
+        self.skip_dup_cb.setChecked(True)
+        opts_layout.addWidget(self.skip_dup_cb)
+        imp_layout.addWidget(opts_group)
+        imp_layout.addStretch()
+        
+        self.content_layout.addWidget(self.import_widget)
+    
+    def on_mode_changed(self):
+        if self.export_radio.isChecked():
+            self.export_widget.setVisible(True)
+            self.import_widget.setVisible(False)
+            self.execute_btn.setText("Экспортировать")
+        else:
+            self.export_widget.setVisible(False)
+            self.import_widget.setVisible(True)
+            self.execute_btn.setText("Импортировать")
+    
+    def on_select_all(self, state):
+        for cb in self.table_cbs.values():
+            cb.setChecked(state == Qt.Checked)
+    
+    def browse_export(self):
+        ext = ".xlsx" if self.xlsx_radio.isChecked() else ".pdf"
+        flt = "Excel файлы (*.xlsx)" if self.xlsx_radio.isChecked() else "PDF файлы (*.pdf)"
+        fp, _ = QFileDialog.getSaveFileName(self, "Сохранить файл", f"export{ext}", flt)
+        if fp:
+            self.file_label.setText(fp)
+    
+    def browse_import(self):
+        fp, _ = QFileDialog.getOpenFileName(self, "Выберите файл", "", "Excel файлы (*.xlsx)")
+        if fp:
+            self.import_file_label.setText(fp)
+    
+    def execute(self):
+        if self.export_radio.isChecked():
+            self.do_export()
+        else:
+            self.do_import()
+    
+    def do_export(self):
+        selected = {n: t for n, t in TABLES.items() if self.table_cbs[n].isChecked()}
+        if not selected:
+            QMessageBox.warning(self, "Ошибка", "Выберите хотя бы одну таблицу")
+            return
+        fp = self.file_label.text()
+        if not fp or fp == "Не выбрано":
+            QMessageBox.warning(self, "Ошибка", "Выберите файл для сохранения")
+            return
+        
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)
+        self.execute_btn.setEnabled(False)
+        QApplication.processEvents()
+        
+        if self.xlsx_radio.isChecked():
+            ok = ExportImportHelper.export_to_xlsx(self.db, selected, fp)
+        else:
+            ok = ExportImportHelper.export_to_pdf(self.db, selected, fp)
+        
+        self.progress_bar.setVisible(False)
+        self.execute_btn.setEnabled(True)
+        
+        if ok:
+            QMessageBox.information(self, "✅ Успешно", f"Данные экспортированы:\n{fp}")
+            self.accept()
+        else:
+            QMessageBox.critical(self, "❌ Ошибка", "Не удалось экспортировать данные")
+    
+    def do_import(self):
+        fp = self.import_file_label.text()
+        if not fp or fp == "Не выбрано":
+            QMessageBox.warning(self, "Ошибка", "Выберите файл для импорта")
+            return
+        
+        display_name = self.import_table_combo.currentText()
+        table_name = TABLES[display_name]
+        
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)
+        self.execute_btn.setEnabled(False)
+        QApplication.processEvents()
+        
+        stats = ExportImportHelper.import_from_xlsx(self.db, table_name, fp, self.skip_dup_cb.isChecked())
+        
+        self.progress_bar.setVisible(False)
+        self.execute_btn.setEnabled(True)
+        
+        msg = f"📊 Статистика импорта в '{display_name}':\n"
+        msg += f"• Всего строк: {stats['total']}\n"
+        msg += f"• Импортировано: {stats['imported']}\n"
+        msg += f"• Пропущено: {stats['skipped']}\n"
+        if stats['errors']:
+            msg += f"• Ошибки: {stats['errors']}\n"
+            msg += "\n".join(stats['error_messages'][:3])
+        
+        QMessageBox.information(self, "Результат", msg)
+        if stats['imported'] > 0:
+            self.parent().reload_current_table()
+
+# ============================================================================
+# ОСНОВНОЙ КЛАСС TablePanel
+# ============================================================================
+
 class TablePanel(QMainWindow):
     def __init__(self, user_data):
         super().__init__()
@@ -439,18 +1044,8 @@ class TablePanel(QMainWindow):
         self.menu_button = QPushButton("☰")
         self.menu_button.setFixedSize(40, 40)
         self.menu_button.setStyleSheet("""
-            QPushButton { 
-                background-color: transparent; 
-                color: #1A529C; 
-                border: none; 
-                border-radius: 4px; 
-                font-size: 24px; 
-                font-weight: bold; 
-            } 
-            QPushButton:hover { 
-                background-color: #E3F2FD; 
-                color: #0d47a1; 
-            } 
+            QPushButton { background-color: transparent; color: #1A529C; border: none; border-radius: 4px; font-size: 24px; font-weight: bold; }
+            QPushButton:hover { background-color: #E3F2FD; color: #0d47a1; }
         """)
         self.menu_button.clicked.connect(self.toggle_menu)
         top_layout.addWidget(self.menu_button)
@@ -473,16 +1068,8 @@ class TablePanel(QMainWindow):
         add_button = QPushButton("➕ Добавить")
         add_button.setFixedSize(120, 32)
         add_button.setStyleSheet("""
-            QPushButton { 
-                background-color: #007BFF; 
-                color: white; 
-                border-radius: 4px; 
-                font-weight: bold;
-                font-size: 13px;
-            } 
-            QPushButton:hover { 
-                background-color: #0056B3; 
-            }
+            QPushButton { background-color: #007BFF; color: white; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #0056B3; }
         """)
         add_button.clicked.connect(self.open_add_form)
         buttons_layout.addWidget(add_button)
@@ -490,16 +1077,8 @@ class TablePanel(QMainWindow):
         delete_button = QPushButton("🗑️ Удалить")
         delete_button.setFixedSize(100, 32)
         delete_button.setStyleSheet("""
-            QPushButton { 
-                background-color: #D32F2F; 
-                color: white; 
-                border-radius: 4px; 
-                font-weight: bold;
-                font-size: 13px;
-            } 
-            QPushButton:hover { 
-                background-color: #B71C1C; 
-            }
+            QPushButton { background-color: #D32F2F; color: white; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #B71C1C; }
         """)
         delete_button.clicked.connect(self.delete_selected_row)
         buttons_layout.addWidget(delete_button)
@@ -512,16 +1091,8 @@ class TablePanel(QMainWindow):
         self.search_button = QPushButton("🔍 Поиск")
         self.search_button.setFixedSize(90, 32)
         self.search_button.setStyleSheet("""
-            QPushButton { 
-                background-color: #17A2B8; 
-                color: white; 
-                border-radius: 4px; 
-                font-weight: bold;
-                font-size: 13px;
-            } 
-            QPushButton:hover { 
-                background-color: #138496; 
-            }
+            QPushButton { background-color: #17A2B8; color: white; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #138496; }
         """)
         self.search_button.clicked.connect(self.perform_search)
         self.search_bar.returnPressed.connect(self.perform_search)
@@ -530,19 +1101,37 @@ class TablePanel(QMainWindow):
         logout_button = QPushButton("Выйти")
         logout_button.setFixedSize(80, 32)
         logout_button.setStyleSheet("""
-            QPushButton { 
-                background-color: #6C757D; 
-                color: white; 
-                border-radius: 4px; 
-                font-weight: bold;
-                font-size: 13px;
-            } 
-            QPushButton:hover { 
-                background-color: #5A6268; 
-            }
+            QPushButton { background-color: #6C757D; color: white; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #5A6268; }
         """)
         logout_button.clicked.connect(self.logout)
         buttons_layout.addWidget(logout_button)
+
+        # === НОВЫЕ КНОПКИ: ЭКСПОРТ/ИМПОРТ ===
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("background-color: #BDC3C7;")
+        sep.setFixedWidth(2)
+        buttons_layout.addWidget(sep)
+
+        export_btn = QPushButton("📤 Экспорт")
+        export_btn.setFixedSize(100, 32)
+        export_btn.setStyleSheet("""
+            QPushButton { background-color: #28A745; color: white; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #218838; }
+        """)
+        export_btn.clicked.connect(self.open_export_dialog)
+        buttons_layout.addWidget(export_btn)
+
+        import_btn = QPushButton("📥 Импорт")
+        import_btn.setFixedSize(100, 32)
+        import_btn.setStyleSheet("""
+            QPushButton { background-color: #FFC107; color: #212529; border-radius: 4px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #E0A800; }
+        """)
+        import_btn.clicked.connect(self.open_import_dialog)
+        buttons_layout.addWidget(import_btn)
+        # === КОНЕЦ НОВЫХ КНОПОК ===
 
         top_layout.addWidget(buttons_container)
         top_layout.addStretch()
@@ -560,32 +1149,14 @@ class TablePanel(QMainWindow):
         header.sortRequested.connect(self.sort_by_column)
         
         self.data_table.setStyleSheet("""
-            QTableView { 
-                background-color: white; 
-                color: black; 
-                font-size: 12px; 
-                alternate-background-color: #fafafa;
-                gridline-color: #e0e0e0;
-            }
-            QHeaderView::section { 
-                background-color: #004085; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 14px; 
-                padding: 6px; 
-                border: none; 
-            }
-            QHeaderView::section:hover { 
-                background-color: #0056B3; 
-            }
-            QHeaderView::section:pressed { 
-                background-color: #003366; 
-            }
+            QTableView { background-color: white; color: black; font-size: 12px; alternate-background-color: #fafafa; gridline-color: #e0e0e0; }
+            QHeaderView::section { background-color: #004085; color: white; font-weight: bold; font-size: 14px; padding: 6px; border: none; }
+            QHeaderView::section:hover { background-color: #0056B3; }
+            QHeaderView::section:pressed { background-color: #003366; }
         """)
         
         delegate = EditableItemDelegate(self.data_table, self)
         self.data_table.setItemDelegate(delegate)
-        
         self.content_layout.addWidget(self.data_table, 1)
 
         self.proxy_model = CustomFilterProxyModel()
@@ -619,6 +1190,18 @@ class TablePanel(QMainWindow):
         self.side_menu.raise_()
 
         self.load_table("Пользователи")
+
+    # === НОВЫЕ МЕТОДЫ ДЛЯ ЭКСПОРТА/ИМПОРТА ===
+    def open_export_dialog(self):
+        dialog = ExportImportDialog(self, self.db)
+        dialog.exec()
+    
+    def open_import_dialog(self):
+        dialog = ExportImportDialog(self, self.db)
+        dialog.import_radio.setChecked(True)
+        dialog.on_mode_changed()
+        dialog.exec()
+    # === КОНЕЦ НОВЫХ МЕТОДОВ ===
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -670,7 +1253,6 @@ class TablePanel(QMainWindow):
         is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
         is_date = logical_index in DATE_COLUMNS.get(table_name, [])
         sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
-        
         if is_numeric:
             self.proxy_model.setSortRole(Qt.EditRole)
         elif is_date:
@@ -678,7 +1260,6 @@ class TablePanel(QMainWindow):
         else:
             self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
             self.proxy_model.setSortRole(Qt.DisplayRole)
-            
         self.proxy_model.sort(logical_index, sort_order)
         if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
             header = self.data_table.horizontalHeader()
@@ -690,15 +1271,11 @@ class TablePanel(QMainWindow):
 
     def _adjust_column_widths(self):
         header = self.data_table.horizontalHeader()
-        if not header or header.count() == 0:
-            return
-        
+        if not header or header.count() == 0: return
         for i in range(header.count()):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-            
         total_width = sum(header.sectionSize(i) for i in range(header.count()))
         viewport_width = self.data_table.viewport().width()
-        
         if total_width < viewport_width:
             header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
 
@@ -709,13 +1286,9 @@ class TablePanel(QMainWindow):
             rus_data = {field: dialog.input_fields[field].text() for field in dialog.input_fields}
             eng_data = {}
             mapping = COLUMN_MAPPING.get(selected_table, {})
-
             for rus_key, value in rus_data.items():
-                if rus_key in HIDDEN_FIELDS.get(selected_table, []):
-                    continue
-
+                if rus_key in HIDDEN_FIELDS.get(selected_table, []): continue
                 eng_key = mapping.get(rus_key, rus_key.lower().replace(" ", "_"))
-
                 if rus_key == "Пароль":
                     from utils.password_helper import PasswordHelper
                     eng_data['password_hash'] = PasswordHelper.hash_password(value)
@@ -732,7 +1305,6 @@ class TablePanel(QMainWindow):
                         except: eng_data[eng_key] = value
                     else:
                         eng_data[eng_key] = value
-
             try:
                 self.db.insert_record(selected_table, eng_data)
                 QMessageBox.information(self, "Успешно", "Запись добавлена!")
@@ -745,11 +1317,9 @@ class TablePanel(QMainWindow):
         col = index.column()
         table_name = TABLES[self.table_selector.currentText()]
         model = self.data_table.model()
-        
         record_id = model.index(row, 0).data()
         header_name = HEADERS[table_name][col]
         db_column = COLUMN_MAPPING[table_name].get(header_name, header_name.lower().replace(" ", "_"))
-        
         if header_name in ["Количество", "Мин. запас", "ID"]:
             try: new_value = int(new_value)
             except: pass
@@ -758,7 +1328,6 @@ class TablePanel(QMainWindow):
             except: pass
         elif header_name == "Активен":
             new_value = str(new_value).lower() in ('true', '1', 'да', 'yes')
-
         try:
             updated_data = {db_column: new_value}
             self.db.update_record(table_name, record_id, updated_data)
@@ -775,14 +1344,11 @@ class TablePanel(QMainWindow):
             model = self.data_table.model()
             record_id = model.index(row, 0).data()
             table_name = TABLES[self.table_selector.currentText()]
-            
             try:
                 dependencies = self.db.get_foreign_key_dependencies(table_name, record_id)
-                
                 if dependencies:
                     dep_text = "\n".join([f"• {table}: {count} записей" for table, count in dependencies.items()])
                     total = sum(dependencies.values())
-                    
                     msg = QMessageBox(self)
                     msg.setIcon(QMessageBox.Question)
                     msg.setWindowTitle("Подтверждение каскадного удаления")
@@ -790,9 +1356,7 @@ class TablePanel(QMainWindow):
                     msg.setInformativeText(f"{dep_text}\n\nЖелаете продолжить?")
                     msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
                     msg.setDefaultButton(QMessageBox.No)
-                    
                     result = msg.exec()
-                    
                     if result == QMessageBox.Yes:
                         deleted = self.db.cascade_delete(table_name, record_id)
                         deleted_text = "\n".join([f"• {table}: {count}" for table, count in deleted.items()])
@@ -800,14 +1364,11 @@ class TablePanel(QMainWindow):
                         QMessageBox.information(self, "Успешно", f"Удалено записей: {total_deleted}\n\n{deleted_text}")
                         self.reload_current_table()
                 else:
-                    confirm_result = QMessageBox.question(self, "Подтверждение удаления",
-                                                       "Вы действительно хотите удалить выбранную запись?",
-                                                       QMessageBox.Yes | QMessageBox.No)
+                    confirm_result = QMessageBox.question(self, "Подтверждение удаления", "Вы действительно хотите удалить выбранную запись?", QMessageBox.Yes | QMessageBox.No)
                     if confirm_result == QMessageBox.Yes:
                         self.db.delete_record(table_name, record_id)
                         self.reload_current_table()
                         QMessageBox.information(self, "Успешно", "Запись успешно удалена!")
-                        
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении:\n{str(e)}")
         else:
@@ -824,15 +1385,11 @@ class TablePanel(QMainWindow):
             headers = HEADERS[table_name]
             model = QStandardItemModel(len(rows), len(headers))
             model.setHorizontalHeaderLabels(headers)
-
             for row_idx, row in enumerate(rows):
                 row_values = list(row.values())
                 for col_idx in range(len(headers)):
                     value = row_values[col_idx] if col_idx < len(row_values) else None
-                    
                     item = QStandardItem()
-                    
-                    # ✅ ПРОСТОЙ И НАДЁЖНЫЙ ПОДХОД
                     if value is None:
                         display_text = ""
                     elif isinstance(value, datetime):
@@ -850,34 +1407,24 @@ class TablePanel(QMainWindow):
                         if len(text) > MAX_CELL_LENGTH:
                             text = text[:MAX_CELL_LENGTH - 1] + "…"
                         display_text = text
-                    
-                    # ✅ УСТАНАВЛИВАЕМ ТЕКСТ И ДАННЫЕ
                     item.setText(display_text)
                     item.setData(display_text, Qt.ItemDataRole.DisplayRole)
                     item.setData(display_text, Qt.ItemDataRole.EditRole)
-                    
-                    # Выравнивание для чисел
                     if isinstance(value, (int, float)):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                     else:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                    
                     model.setItem(row_idx, col_idx, item)
-
             header = self.data_table.horizontalHeader()
             self._adjust_column_widths()
-
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
-            
             if isinstance(header, SortableHeaderView):
                 header.sort_column = -1
                 header.sort_ascending = True
-            
             self.search_bar.clear()
             self.proxy_model.set_search_text("")
             self.reset_sort()
-
         except Exception as e:
             print(f"❌ Ошибка при загрузке таблицы '{table_name}': {e}")
             import traceback

@@ -3,7 +3,7 @@ import sys
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QTabWidget, QGroupBox, QFrame, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QGridLayout
+    QHeaderView, QMessageBox, QGridLayout, QComboBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
@@ -40,6 +40,7 @@ class ReportsPage(QMainWindow):
         self.init_ui()
         self.load_dashboard_data()
         if HAS_MATPLOTLIB:
+            self.load_materials_for_combo()
             self.load_charts_data()
         self.load_critical_stock_data()
         
@@ -119,6 +120,12 @@ class ReportsPage(QMainWindow):
         self.setup_stock_tab()
         self.tabs.addTab(self.stock_tab, "⚠️ Внимание (Мало)")
         
+        # Вкладка 4: Категории
+        self.categories_tab = QWidget()
+        self.categories_tab.setStyleSheet("background-color: #FAFAFA;")
+        self.setup_categories_tab()
+        self.tabs.addTab(self.categories_tab, "📊 Категории")
+        
         self.tabs.setCurrentIndex(0)
         main_layout.addWidget(self.tabs, 1)
         
@@ -167,6 +174,33 @@ class ReportsPage(QMainWindow):
             layout.addWidget(msg)
             layout.addStretch()
             return
+        
+        # Выбор материала
+        filter_layout = QHBoxLayout()
+        filter_label = QLabel("📦 Материал:")
+        filter_label.setFont(QFont('Segoe UI', 11, QFont.Weight.Bold))
+        filter_label.setStyleSheet(f"color: {self.PRIMARY_COLOR};")
+        filter_layout.addWidget(filter_label)
+        
+        self.material_combo = QComboBox()
+        self.material_combo.setMinimumWidth(300)
+        self.material_combo.setStyleSheet(f"""
+            QComboBox {{ 
+                padding: 8px; 
+                border: 2px solid {self.PRIMARY_COLOR}; 
+                border-radius: 4px;
+                font-size: 12px;
+                background: white;
+            }}
+            QComboBox:hover {{ border-color: {self.PRIMARY_DARK}; }}
+            QComboBox::drop-down {{ border: none; width: 30px; }}
+            QComboBox::down-arrow {{ image: none; border: none; }}
+        """)
+        self.material_combo.currentTextChanged.connect(self.load_charts_data)
+        filter_layout.addWidget(self.material_combo)
+        filter_layout.addStretch()
+        
+        layout.addLayout(filter_layout)
             
         # График приходов/расходов
         flow_group = QGroupBox("📈 Динамика приходов и расходов")
@@ -175,27 +209,6 @@ class ReportsPage(QMainWindow):
         self.flow_canvas = self._create_matplotlib_canvas()
         flow_layout.addWidget(self.flow_canvas)
         layout.addWidget(flow_group)
-        
-        # График категорий
-        cat_group = QGroupBox("🥧 Распределение стоимости по категориям")
-        cat_group.setStyleSheet(self._group_box_style())
-        cat_layout = QVBoxLayout(cat_group)
-        self.cat_canvas = self._create_matplotlib_canvas()
-        self.cat_placeholder = QLabel()
-        self.cat_placeholder.setAlignment(Qt.AlignCenter)
-        self.cat_placeholder.setStyleSheet("""
-            QLabel { 
-                color: #7F8C8D; 
-                font-size: 14px; 
-                padding: 40px;
-                background: #FAFAFA;
-                border: 2px dashed #BDC3C7;
-                border-radius: 8px;
-            }
-        """)
-        cat_layout.addWidget(self.cat_canvas)
-        cat_layout.addWidget(self.cat_placeholder)
-        layout.addWidget(cat_group, 1)
         
     def setup_stock_tab(self):
         layout = QVBoxLayout(self.stock_tab)
@@ -220,6 +233,41 @@ class ReportsPage(QMainWindow):
         """)
         layout.addWidget(self.low_stock_table)
         layout.addStretch()
+    
+    def setup_categories_tab(self):
+        layout = QVBoxLayout(self.categories_tab)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+        
+        if not HAS_MATPLOTLIB:
+            msg = QLabel("⚠️ Для отображения графиков установите библиотеку: <b>pip install matplotlib</b>")
+            msg.setWordWrap(True)
+            msg.setFont(QFont('Segoe UI', 12))
+            msg.setStyleSheet("color: #E74C3C; padding: 20px;")
+            layout.addWidget(msg)
+            layout.addStretch()
+            return
+        
+        # График категорий
+        cat_group = QGroupBox("🥧 Распределение стоимости по категориям")
+        cat_group.setStyleSheet(self._group_box_style())
+        cat_layout = QVBoxLayout(cat_group)
+        self.cat_canvas = self._create_matplotlib_canvas()
+        self.cat_placeholder = QLabel()
+        self.cat_placeholder.setAlignment(Qt.AlignCenter)
+        self.cat_placeholder.setStyleSheet("""
+            QLabel { 
+                color: #7F8C8D; 
+                font-size: 14px; 
+                padding: 40px;
+                background: #FAFAFA;
+                border: 2px dashed #BDC3C7;
+                border-radius: 8px;
+            }
+        """)
+        cat_layout.addWidget(self.cat_canvas)
+        cat_layout.addWidget(self.cat_placeholder)
+        layout.addWidget(cat_group, 1)
 
     # ─── Вспомогательные UI методы ───────────────────────────────
     def _create_card(self, title, value, color):
@@ -257,6 +305,27 @@ class ReportsPage(QMainWindow):
         return canvas
 
     # ─── Загрузка данных ─────────────────────────────────────────
+    def load_materials_for_combo(self):
+        """Загружает список материалов в ComboBox"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name FROM materials ORDER BY name")
+            materials = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            # Очищаем и добавляем "Все материалы" + список
+            self.material_combo.clear()
+            self.material_combo.addItem("📊 Все материалы", userData=None)
+            for mat_id, name in materials:
+                self.material_combo.addItem(f"📦 {name}", userData=mat_id)
+                
+        except Exception as e:
+            print(f"Ошибка загрузки материалов: {e}")
+            self.material_combo.clear()
+            self.material_combo.addItem("📊 Все материалы", userData=None)
+
     def load_dashboard_data(self):
         try:
             conn = self.db.get_connection()
@@ -299,15 +368,34 @@ class ReportsPage(QMainWindow):
             # Получаем текущую дату
             today = date.today()
             
-            # Данные за последние 30 дней (по дням), но не дальше текущей даты
-            cursor.execute("""
-                SELECT DATE(document_date) as day, transaction_type, COALESCE(SUM(quantity), 0)
-                FROM transactions
-                WHERE document_date >= CURRENT_DATE - INTERVAL '30 days'
-                AND document_date <= CURRENT_DATE
-                GROUP BY day, transaction_type 
-                ORDER BY day
-            """)
+            # Получаем выбранный материал
+            selected_data = self.material_combo.currentData()
+            
+            if selected_data is None:
+                # Все материалы
+                cursor.execute("""
+                    SELECT DATE(document_date) as day, transaction_type, COALESCE(SUM(quantity), 0)
+                    FROM transactions
+                    WHERE document_date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND document_date <= CURRENT_DATE
+                    GROUP BY day, transaction_type 
+                    ORDER BY day
+                """)
+                title_suffix = ""
+            else:
+                # Конкретный материал
+                cursor.execute("""
+                    SELECT DATE(document_date) as day, transaction_type, COALESCE(SUM(quantity), 0)
+                    FROM transactions
+                    WHERE material_id = %s
+                    AND document_date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND document_date <= CURRENT_DATE
+                    GROUP BY day, transaction_type 
+                    ORDER BY day
+                """, (selected_data,))
+                material_name = self.material_combo.currentText().replace("📦 ", "")
+                title_suffix = f" - {material_name}"
+            
             rows = cursor.fetchall()
             
             days = []
@@ -338,7 +426,7 @@ class ReportsPage(QMainWindow):
                 ax1.plot(x, incoming, marker='o', color=self.SUCCESS_COLOR, label='Приход', linewidth=2)
                 ax1.plot(x, outgoing, marker='s', color=self.DANGER_COLOR, label='Расход', linewidth=2)
                 
-                ax1.set_title("Движение материалов (последние 30 дней)", fontsize=12, fontweight='bold')
+                ax1.set_title(f"Движение материалов (последние 30 дней){title_suffix}", fontsize=12, fontweight='bold')
                 ax1.set_xticks(x)
                 ax1.set_xticklabels(days, rotation=45, ha='right')
                 ax1.legend(loc='upper right')
@@ -363,8 +451,20 @@ class ReportsPage(QMainWindow):
                 ax1.axis('off')
                 self.flow_canvas.draw()
             
-            # ✅ График 2: Категории - ИСПРАВЛЕННЫЙ ЗАПРОС
-            # Используем подзапрос, чтобы избежать ошибки с алиасом в HAVING
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Ошибка графиков: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def load_categories_chart(self):
+        """Загружает график категорий"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # График 2: Категории
             cursor.execute("""
                 SELECT name, total_val
                 FROM (
@@ -401,7 +501,7 @@ class ReportsPage(QMainWindow):
             cursor.close()
             conn.close()
         except Exception as e:
-            print(f"Ошибка графиков: {e}")
+            print(f"Ошибка графика категорий: {e}")
             import traceback
             traceback.print_exc()
             
@@ -430,6 +530,10 @@ class ReportsPage(QMainWindow):
                 status_item = QTableWidgetItem(status)
                 status_item.setForeground(QColor(self.DANGER_COLOR if qty == 0 else self.WARNING_COLOR))
                 self.low_stock_table.setItem(i, 4, status_item)
+                
+            # Загружаем график категорий при инициализации
+            if HAS_MATPLOTLIB:
+                self.load_categories_chart()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить запасы: {e}")
 
