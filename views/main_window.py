@@ -1,4 +1,3 @@
-# main_window.py
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QMessageBox, QStackedWidget
@@ -41,49 +40,60 @@ class MainWindow(QMainWindow):
         self.create_bottom_panel(main_layout)
     
     def create_top_panel(self, parent_layout):
+        # --- Верхняя панель ---
         top_frame = QFrame()
+        top_frame.setFixedHeight(80)
         top_frame.setStyleSheet("""
             QFrame {
                 background-color: #F0F8FF;
                 border-bottom: 2px solid #1A529C;
             }
         """)
-        top_frame.setFixedHeight(130)
         
+        # Основной горизонтальный лейаут панели
         top_layout = QHBoxLayout(top_frame)
-        top_layout.setContentsMargins(20, 15, 20, 15)
+        # (слева, верх, справа, низ) -> ставим 20 и 20 по бокам для отступа от края окна
+        top_layout.setContentsMargins(20, 0, 20, 0) 
         top_layout.setSpacing(20)
         
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(10)
+        # === ЛЕВАЯ ЧАСТЬ (Лого + Текст) ===
+        left_layout = QHBoxLayout()
+        left_layout.setSpacing(15) # Расстояние между лого и текстом
         
+        # Логотип
         self.logo_label = QLabel()
-        self.logo_label.setFixedSize(40, 40)
+        self.logo_label.setFixedSize(50, 50)
         left_layout.addWidget(self.logo_label)
         
+        # Заголовок
         title_label = QLabel("Подключение к базе данных")
         title_label.setStyleSheet("""
             color: #1A529C;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 16px;
         """)
         left_layout.addWidget(title_label)
         
-        top_layout.addLayout(left_layout)
-        top_layout.addStretch(1)
+        # Растягиваем пустое место, чтобы отделить левую часть от правой
+        left_layout.addStretch() 
         
+        top_layout.addLayout(left_layout, 1) # factor=1 чтобы занимало место
+        
+        # === ПРАВАЯ ЧАСТЬ (Статус + Кнопка) ===
         right_layout = QVBoxLayout()
-        right_layout.setSpacing(8)
+        # Убираем внутренние отступы, чтобы текст прижимался к правому краю
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(5)
         
+        # Текст статуса (выравнивание вправо)
         self.status_label = QLabel("Подключение к БД")
-        self.status_label.setStyleSheet("""
-            color: #333333;
-            font-size: 12px;
-        """)
+        self.status_label.setStyleSheet("color: #555; font-size: 11px;")
+        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         right_layout.addWidget(self.status_label)
         
+        # Кнопка проверки
         self.test_btn = QPushButton("Проверить подключение")
-        self.test_btn.setFixedSize(180, 35)
+        self.test_btn.setFixedSize(180, 32)
         self.test_btn.setStyleSheet("""
             QPushButton {
                 background-color: #1A529C;
@@ -92,24 +102,28 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
                 font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #0d47a1;
-            }
+            QPushButton:hover { background-color: #0d47a1; }
         """)
         self.test_btn.clicked.connect(self.test_connection)
-        right_layout.addWidget(self.test_btn)
         
+        # Хоризонтальный контейнер для кнопки, чтобы выровнять её вправо
+        btn_container = QHBoxLayout()
+        btn_container.setContentsMargins(0, 0, 0, 0)
+        btn_container.addStretch() # Пустое место слева от кнопки
+        btn_container.addWidget(self.test_btn)
+        right_layout.addLayout(btn_container)
+        
+        # Результат проверки (выравнивание вправо)
         self.result_label = QLabel("---")
-        self.result_label.setStyleSheet("""
-            color: #666666;
-            font-size: 11px;
-            font-family: Consolas;
-        """)
+        self.result_label.setStyleSheet("color: #666; font-size: 10px; font-family: Consolas;")
+        self.result_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         right_layout.addWidget(self.result_label)
         
+        top_layout.addWidget(QWidget()) # Пустой виджет-растяжка между левой и правой частью
         top_layout.addLayout(right_layout)
+        
         parent_layout.addWidget(top_frame)
-    
+
     def create_center_area(self, parent_layout):
         self.stacked_widget = QStackedWidget()
         self.stacked_widget.setStyleSheet("background-color: white;")
@@ -236,10 +250,10 @@ class MainWindow(QMainWindow):
         self.reg_page.registration_successful.connect(self.on_registration_success)
     
     def load_logo(self):
-        logo_path = os.path.join(os.path.dirname(__file__), '..', 'images', 'logo.png')
+        logo_path = os.path.join(os.path.dirname(__file__), '..', 'images', 'logo.jpg')
         if os.path.exists(logo_path):
             pixmap = QPixmap(logo_path)
-            self.logo_label.setPixmap(pixmap.scaled(40, 40, 
+            self.logo_label.setPixmap(pixmap.scaled(50, 50, 
                 Qt.AspectRatioMode.KeepAspectRatio, 
                 Qt.TransformationMode.SmoothTransformation))
     
@@ -285,7 +299,7 @@ class MainWindow(QMainWindow):
         self.auth_page.clear_fields()
     
     def show_reg_page(self):
-        """Показывает страницу регистрации"""
+        """Показывает страницы регистрации"""
         self.stacked_widget.setCurrentWidget(self.reg_page)
         self.reg_page.clear_fields()
     

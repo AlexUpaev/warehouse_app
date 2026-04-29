@@ -183,17 +183,29 @@ class AuthPage(QWidget):
     def handle_login(self):
         login = self.login_input.text().strip()
         password = self.password_input.text().strip()
-
+        
         if not login or not password:
             QMessageBox.warning(self, 'Ошибка', 'Заполните все поля')
             return
-
-        user = self.db.authenticate_user(login, password)
-
-        if user:
-            self.login_successful.emit(user)
+        
+        result = self.db.authenticate_user(login, password)
+        
+        if result == 'inactive':
+            QMessageBox.warning(
+                self,
+                'Доступ заблокирован',
+                'Ваш аккаунт деактивирован.\n'
+                'Обратитесь к администратору для восстановления доступа.'
+            )
+            self.login_input.clear()
+            self.password_input.clear()
+            self.login_input.setFocus()
+        elif result:
+            self.login_successful.emit(result)
         else:
             QMessageBox.warning(self, 'Ошибка', 'Неверный логин или пароль')
+            self.password_input.clear()
+            self.password_input.setFocus()
 
     def clear_fields(self):
         self.login_input.clear()
