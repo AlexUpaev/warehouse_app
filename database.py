@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor
 from config import Config
 from utils.password_helper import PasswordHelper
 
+
 class Database:
     """Класс для работы с базой данных склада"""
     
@@ -37,10 +38,11 @@ class Database:
             """,
             "materials": """
                 SELECT m.id, m.name, m.quantity, m.unit, m.price, m.min_quantity,
-                       m.supplier, m.description, c.name AS category_name,
+                       s.name AS supplier, m.description, c.name AS category_name,
                        u.full_name AS created_by_name, m.created_at, m.updated_at
                 FROM materials m
                 LEFT JOIN categories c ON m.category_id = c.id
+                LEFT JOIN suppliers s ON m.supplier_id = s.id
                 LEFT JOIN users u ON m.created_by = u.id
                 ORDER BY m.id
             """,
@@ -367,10 +369,7 @@ class Database:
             if conn: conn.close()
     
     def update_user_password(self, user_id: int, new_password_hash: str) -> bool:
-        """
-        Обновляет хеш пароля для пользователя.
-        Используется в личном кабинете при смене пароля.
-        """
+        """Обновляет хеш пароля для пользователя"""
         query = "UPDATE users SET password_hash = %s WHERE id = %s"
         conn = None
         cursor = None
@@ -389,17 +388,7 @@ class Database:
             if conn: conn.close()
     
     def reset_user_password(self, target_user_id: int, new_password: str, admin_user_id: int) -> dict:
-        """
-        Сброс пароля пользователя администратором.
-        
-        Args:
-            target_user_id: ID пользователя, которому сбрасывают пароль
-            new_password: Новый пароль
-            admin_user_id: ID администратора, выполняющего сброс
-        
-        Returns:
-            dict: {'success': bool, 'message': str}
-        """
+        """Сброс пароля пользователя администратором"""
         conn = None
         cursor = None
         try:
@@ -407,23 +396,16 @@ class Database:
             cursor = conn.cursor()
             
             # Проверяем, что админ существует и имеет роль admin
-            cursor.execute(
-                "SELECT role FROM users WHERE id = %s",
-                (admin_user_id,)
-            )
+            cursor.execute("SELECT role FROM users WHERE id = %s", (admin_user_id,))
             admin = cursor.fetchone()
             
             if not admin:
                 return {'success': False, 'message': 'Администратор не найден'}
-            
             if admin[0] != 'admin':
                 return {'success': False, 'message': 'Только администратор может сбрасывать пароли'}
             
             # Проверяем существование пользователя
-            cursor.execute(
-                "SELECT login, full_name FROM users WHERE id = %s",
-                (target_user_id,)
-            )
+            cursor.execute("SELECT login, full_name FROM users WHERE id = %s", (target_user_id,))
             user = cursor.fetchone()
             
             if not user:
@@ -433,11 +415,7 @@ class Database:
             hashed_password = PasswordHelper.hash_password(new_password)
             
             # Обновляем пароль
-            cursor.execute(
-                "UPDATE users SET password_hash = %s WHERE id = %s",
-                (hashed_password, target_user_id)
-            )
-            
+            cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hashed_password, target_user_id))
             conn.commit()
             
             return {

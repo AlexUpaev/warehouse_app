@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QStyledItemDelegate, QFileDialog, QCheckBox, QGroupBox, QRadioButton,
     QButtonGroup, QProgressBar
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QPoint, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QPoint, Signal, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QValidator, QColor
 
 from database import Database
@@ -98,6 +98,12 @@ DATE_COLUMNS = {
     "materials": [10, 11], "transactions": [6, 8], "material_history": [8]
 }
 
+# Столбцы для выравнивания по центру
+CENTER_ALIGNED_COLUMNS = {
+    "users": [0, 5], "categories": [0], "suppliers": [0],
+    "materials": [0, 2, 3, 4, 5], "transactions": [0, 3, 4], "material_history": [0, 2, 3, 4]
+}
+
 MAX_CELL_LENGTH = 60
 
 # ============================================================================
@@ -129,8 +135,29 @@ class InputForm(QDialog):
     def __init__(self, table_name, fields_or_values, parent=None):
         super().__init__(parent)
         self.table_name = table_name
-        form_layout = QFormLayout()
-        self.setLayout(form_layout)
+        self.setWindowTitle(f"Добавление записи: {table_name}")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        
+        # Заголовок
+        title = QLabel(f"Добавление новой записи")
+        title.setFont(QFont('Segoe UI', 16, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1A529C;")
+        main_layout.addWidget(title)
+        
+        # Скролл для формы
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none; background-color: transparent;")
+        
+        form_widget = QWidget()
+        form_layout = QFormLayout(form_widget)
+        form_layout.setSpacing(12)
+        form_layout.setContentsMargins(0, 0, 0, 0)
 
         if isinstance(fields_or_values, list):
             fields = fields_or_values
@@ -178,7 +205,24 @@ class InputForm(QDialog):
 
         for field in fields:
             label = QLabel(field)
+            label.setStyleSheet("font-weight: 500; color: #333;")
             input_field = QLineEdit()
+            input_field.setMinimumHeight(36)
+            input_field.setStyleSheet("""
+                QLineEdit {
+                    background-color: #FAFAFA;
+                    border: 1px solid #D0D0D0;
+                    border-radius: 4px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                }
+                QLineEdit:focus {
+                    border: 2px solid #1A529C;
+                    background-color: white;
+                    outline: none;
+                }
+            """)
+            
             if field in placeholders:
                 input_field.setPlaceholderText(placeholders[field])
             if field in masks:
@@ -206,10 +250,33 @@ class InputForm(QDialog):
             self.input_fields[field] = input_field
             form_layout.addRow(label, input_field)
 
+        scroll.setWidget(form_widget)
+        main_layout.addWidget(scroll, 1)
+        
+        # Кнопки
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.setFixedHeight(40)
+        button_box.setStyleSheet("""
+            QPushButton {
+                background-color: #1A529C;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: 600;
+                padding: 8px 20px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #0d47a1;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
         button_box.accepted.connect(self.validate_and_submit)
         button_box.rejected.connect(self.reject)
-        form_layout.addRow(button_box)
+        main_layout.addWidget(button_box)
 
     def validate_and_submit(self):
         if self.table_name == "users":
@@ -252,20 +319,50 @@ class CustomFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.search_text = ""
+        self.setDynamicSortFilter(False)
+        self.setSortCaseSensitivity(Qt.CaseInsensitive)
 
     def set_search_text(self, text):
         self.search_text = text.strip().lower()
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row, source_parent):
-        if not self.search_text: return True
+        if not self.search_text: 
+            return True
         source_model = self.sourceModel()
-        if source_model is None: return True
+        if source_model is None: 
+            return True
         for column in range(source_model.columnCount()):
             index = source_model.index(source_row, column, source_parent)
             cell_value = str(source_model.data(index, Qt.DisplayRole) or "").lower()
-            if self.search_text in cell_value: return True
+            if self.search_text in cell_value: 
+                return True
         return False
+    
+    def lessThan(self, left, right):
+        """Переопределяем метод сортировки для корректной работы с числами"""
+        left_data = left.data(Qt.DisplayRole)
+        right_data = right.data(Qt.DisplayRole)
+        
+        # Пробуем преобразовать в число
+        try:
+            left_num = float(str(left_data).replace(',', '.'))
+            right_num = float(str(right_data).replace(',', '.'))
+            return left_num < right_num
+        except (ValueError, TypeError):
+            pass
+        
+        # Пробуем преобразовать дату
+        for fmt in ["%d.%m.%Y %H:%M", "%d.%m.%Y"]:
+            try:
+                left_date = datetime.strptime(str(left_data), fmt)
+                right_date = datetime.strptime(str(right_data), fmt)
+                return left_date < right_date
+            except (ValueError, TypeError):
+                continue
+        
+        # Строковое сравнение
+        return str(left_data).lower() < str(right_data).lower()
 
 class EditableItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, table_panel=None):
@@ -647,7 +744,7 @@ class TablePanel(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle(f"Управление складом | {self.user_data['full_name']}")
-        self.setGeometry(100, 100, 1100, 750)
+        self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(1024, 768)
         central_widget = QWidget()
         central_widget.setStyleSheet("background-color: white;")
@@ -663,82 +760,105 @@ class TablePanel(QMainWindow):
 
         # ─── ВЕРХНЯЯ ПАНЕЛЬ ──────────────────────────────────────
         top_panel = QWidget()
-        top_panel.setFixedHeight(60)
+        top_panel.setFixedHeight(70)
         top_panel.setStyleSheet("""
             background-color: #F0F8FF; 
             border-bottom: 2px solid #1A529C;
         """)
         top_layout = QHBoxLayout(top_panel)
-        top_layout.setContentsMargins(20, 0, 20, 0)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(15, 10, 15, 10)
+        top_layout.setSpacing(15)
 
-        # Кнопка меню
+        # ЛЕВАЯ ЧАСТЬ: Меню + Пользователь
+        left_section = QHBoxLayout()
+        left_section.setSpacing(15)
+        
+        # Кнопка меню (без синего фона)
         self.menu_button = QPushButton("☰")
         self.menu_button.setFixedSize(40, 40)
         self.menu_button.setStyleSheet("""
             QPushButton { 
                 background-color: transparent; 
                 color: #1A529C; 
-                border: none; 
-                border-radius: 4px; 
-                font-size: 24px; 
+                border: 2px solid #1A529C;
+                border-radius: 6px; 
+                font-size: 20px; 
                 font-weight: bold; 
             } 
             QPushButton:hover { 
-                background-color: #E3F2FD; 
-                color: #0d47a1; 
+                background-color: #1A529C;
+                color: white;
             }
         """)
         self.menu_button.clicked.connect(self.toggle_menu)
-        top_layout.addWidget(self.menu_button)
+        left_section.addWidget(self.menu_button)
 
         # Информация о пользователе
-        user_label = QLabel(f"Пользователь: {self.user_data['full_name']} ({self.user_role})")
-        user_label.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
-        user_label.setStyleSheet("color: #004085;")
-        top_layout.addWidget(user_label)
+        user_container = QWidget()
+        user_layout = QVBoxLayout(user_container)
+        user_layout.setContentsMargins(0, 0, 0, 0)
+        user_layout.setSpacing(0)
+        
+        user_label = QLabel(f"Пользователь: {self.user_data['full_name']}")
+        user_label.setFont(QFont('Segoe UI', 13, QFont.Weight.Bold))
+        user_label.setStyleSheet("color: #1A529C;")
+        
+        role_label = QLabel(f"({self.user_role})")
+        role_label.setFont(QFont('Segoe UI', 11))
+        role_label.setStyleSheet("color: #666;")
+        
+        user_layout.addWidget(user_label)
+        user_layout.addWidget(role_label)
+        left_section.addWidget(user_container)
+        
+        top_layout.addLayout(left_section)
 
-        top_layout.addSpacing(20)
-
-        # Контейнер для кнопок
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(8)
-
+        # ЦЕНТРАЛЬНАЯ ЧАСТЬ: Селектор таблиц + Кнопки Добавить/Удалить
+        center_section = QHBoxLayout()
+        center_section.setSpacing(10)
+        
         # Выпадающий список таблиц
         self.table_selector = QComboBox()
         allowed_tables = self.user_perms["tables"]
         self.table_selector.addItems(allowed_tables)
-        self.table_selector.setFixedWidth(180)
+        self.table_selector.setFixedWidth(220)
+        self.table_selector.setFixedHeight(36)
         self.table_selector.setStyleSheet("""
             QComboBox {
                 background-color: white;
-                border: 1px solid #1A529C;
-                border-radius: 4px;
-                padding: 5px 10px;
+                border: 2px solid #1A529C;
+                border-radius: 6px;
+                padding: 5px 12px;
                 font-size: 13px;
+                font-weight: 500;
             }
             QComboBox:hover {
                 border-color: #0d47a1;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 25px;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                width: 12px;
+                height: 12px;
             }
         """)
         self.table_selector.currentTextChanged.connect(self.load_table)
-        buttons_layout.addWidget(self.table_selector)
+        center_section.addWidget(self.table_selector)
 
         # Кнопка Добавить
-        self.add_button = QPushButton("Добавить")
-        self.add_button.setFixedSize(100, 32)
+        self.add_button = QPushButton("+ Добавить")
+        self.add_button.setFixedHeight(36)
+        self.add_button.setMinimumWidth(120)
         self.add_button.setStyleSheet("""
             QPushButton { 
                 background-color: #1A529C; 
                 color: white; 
                 border: none; 
-                border-radius: 4px; 
+                border-radius: 6px; 
                 font-weight: 600; 
-                font-size: 13px; 
+                font-size: 13px;
             } 
             QPushButton:hover { 
                 background-color: #0d47a1; 
@@ -751,19 +871,20 @@ class TablePanel(QMainWindow):
         self.add_button.clicked.connect(self.open_add_form)
         if not self.user_perms["can_edit"]:
             self.add_button.setEnabled(False)
-        buttons_layout.addWidget(self.add_button)
+        center_section.addWidget(self.add_button)
 
         # Кнопка Удалить
-        self.delete_button = QPushButton("Удалить")
-        self.delete_button.setFixedSize(90, 32)
+        self.delete_button = QPushButton("🗑 Удалить")
+        self.delete_button.setFixedHeight(36)
+        self.delete_button.setMinimumWidth(100)
         self.delete_button.setStyleSheet("""
             QPushButton { 
                 background-color: #D32F2F; 
                 color: white; 
                 border: none; 
-                border-radius: 4px; 
+                border-radius: 6px; 
                 font-weight: 600; 
-                font-size: 13px; 
+                font-size: 13px;
             } 
             QPushButton:hover { 
                 background-color: #B71C1C; 
@@ -776,59 +897,47 @@ class TablePanel(QMainWindow):
         self.delete_button.clicked.connect(self.delete_selected_row)
         if not self.user_perms["can_delete"]:
             self.delete_button.setEnabled(False)
-        buttons_layout.addWidget(self.delete_button)
+        center_section.addWidget(self.delete_button)
+        
+        top_layout.addLayout(center_section)
 
-        # Поле поиска
+        # ПРАВАЯ ЧАСТЬ: Поиск + Кнопки действий
+        right_section = QHBoxLayout()
+        right_section.setSpacing(10)
+        
+        # Поле поиска (УМЕНЬШЕНО)
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Поиск...")
-        self.search_bar.setFixedWidth(180)
+        self.search_bar.setPlaceholderText("🔍 Поиск...")
+        self.search_bar.setFixedWidth(180)  # Было 250, стало 180
+        self.search_bar.setFixedHeight(36)
         self.search_bar.setStyleSheet("""
             QLineEdit {
                 background-color: white;
-                border: 1px solid #BDC3C7;
-                border-radius: 4px;
-                padding: 5px 10px;
+                border: 2px solid #BDC3C7;
+                border-radius: 6px;
+                padding: 5px 12px;
                 font-size: 13px;
             }
             QLineEdit:focus {
                 border-color: #1A529C;
+                background-color: #FAFAFA;
             }
         """)
-        buttons_layout.addWidget(self.search_bar)
-
-        # Кнопка Поиск
-        self.search_button = QPushButton("Поиск")
-        self.search_button.setFixedSize(80, 32)
-        self.search_button.setStyleSheet("""
-            QPushButton { 
-                background-color: #17A2B8; 
-                color: white; 
-                border: none; 
-                border-radius: 4px; 
-                font-weight: 600; 
-                font-size: 13px; 
-            } 
-            QPushButton:hover { 
-                background-color: #138496; 
-            }
-        """)
-        self.search_button.clicked.connect(self.perform_search)
-        self.search_bar.returnPressed.connect(self.perform_search)
-        buttons_layout.addWidget(self.search_button)
-
-        buttons_layout.addSpacing(10)
+        self.search_bar.textChanged.connect(self.perform_search)
+        right_section.addWidget(self.search_bar)
 
         # Кнопка Экспорт
-        self.export_btn = QPushButton("Экспорт")
-        self.export_btn.setFixedSize(90, 32)
+        self.export_btn = QPushButton("📤 Экспорт")
+        self.export_btn.setFixedHeight(36)
+        self.export_btn.setMinimumWidth(100)
         self.export_btn.setStyleSheet("""
             QPushButton { 
                 background-color: #28A745; 
                 color: white; 
                 border: none; 
-                border-radius: 4px; 
+                border-radius: 6px; 
                 font-weight: 600; 
-                font-size: 13px; 
+                font-size: 13px;
             } 
             QPushButton:hover { 
                 background-color: #218838; 
@@ -841,19 +950,20 @@ class TablePanel(QMainWindow):
         self.export_btn.clicked.connect(self.open_export_dialog)
         if not self.user_perms["can_import_export"]:
             self.export_btn.setEnabled(False)
-        buttons_layout.addWidget(self.export_btn)
+        right_section.addWidget(self.export_btn)
 
         # Кнопка Импорт
-        self.import_btn = QPushButton("Импорт")
-        self.import_btn.setFixedSize(90, 32)
+        self.import_btn = QPushButton("📥 Импорт")
+        self.import_btn.setFixedHeight(36)
+        self.import_btn.setMinimumWidth(90)
         self.import_btn.setStyleSheet("""
             QPushButton { 
                 background-color: #FFC107; 
                 color: #212529; 
                 border: none; 
-                border-radius: 4px; 
+                border-radius: 6px; 
                 font-weight: 600; 
-                font-size: 13px; 
+                font-size: 13px;
             } 
             QPushButton:hover { 
                 background-color: #E0A800; 
@@ -866,20 +976,21 @@ class TablePanel(QMainWindow):
         self.import_btn.clicked.connect(self.open_import_dialog)
         if not self.user_perms["can_import_export"]:
             self.import_btn.setEnabled(False)
-        buttons_layout.addWidget(self.import_btn)
+        right_section.addWidget(self.import_btn)
 
         # Кнопка Сбросить пароль (только для админа)
         if self.user_perms.get("can_reset_password", False):
-            self.reset_password_btn = QPushButton("Сбросить пароль")
-            self.reset_password_btn.setFixedSize(140, 32)
+            self.reset_password_btn = QPushButton("🔑 Сбросить")
+            self.reset_password_btn.setFixedHeight(36)
+            self.reset_password_btn.setMinimumWidth(110)
             self.reset_password_btn.setStyleSheet("""
                 QPushButton { 
                     background-color: #FF9800; 
                     color: white; 
                     border: none; 
-                    border-radius: 4px; 
+                    border-radius: 6px; 
                     font-weight: 600; 
-                    font-size: 13px; 
+                    font-size: 13px;
                 }
                 QPushButton:hover { 
                     background-color: #F57C00; 
@@ -891,30 +1002,30 @@ class TablePanel(QMainWindow):
             """)
             self.reset_password_btn.setEnabled(False)
             self.reset_password_btn.clicked.connect(self.reset_password_selected_user)
-            buttons_layout.addWidget(self.reset_password_btn)
+            right_section.addWidget(self.reset_password_btn)
 
-        buttons_layout.addStretch()
-
-        # Кнопка Выйти (крайняя справа)
-        logout_button = QPushButton("Выйти")
-        logout_button.setFixedSize(80, 32)
+        # Кнопка Выйти
+        logout_button = QPushButton("🚪 Выйти")
+        logout_button.setFixedHeight(36)
+        logout_button.setMinimumWidth(90)
         logout_button.setStyleSheet("""
             QPushButton { 
                 background-color: #6C757D; 
                 color: white; 
                 border: none; 
-                border-radius: 4px; 
+                border-radius: 6px; 
                 font-weight: 600; 
-                font-size: 13px; 
+                font-size: 13px;
             } 
             QPushButton:hover { 
                 background-color: #5A6268; 
             }
         """)
         logout_button.clicked.connect(self.logout)
-        buttons_layout.addWidget(logout_button)
-
-        top_layout.addLayout(buttons_layout)
+        right_section.addWidget(logout_button)
+        
+        top_layout.addLayout(right_section)
+        
         self.content_layout.addWidget(top_panel)
 
         # ─── ТАБЛИЦА ─────────────────────────────────────────────
@@ -1179,7 +1290,8 @@ class TablePanel(QMainWindow):
             self.side_menu.setGeometry(-280, 0, 280, self.height())
         if hasattr(self, 'overlay'): 
             self.overlay.setGeometry(0, 0, self.width(), self.height())
-        self._adjust_column_widths()
+        # Адаптация ширины колонок при изменении размера
+        QTimer.singleShot(100, self._adjust_column_widths)
 
     def toggle_menu(self):
         if self.menu_opened: 
@@ -1212,8 +1324,10 @@ class TablePanel(QMainWindow):
         self.overlay.hide()
         self.menu_opened = False
 
-    def perform_search(self):
-        text = self.search_bar.text()
+    def perform_search(self, text=None):
+        """Поиск в реальном времени"""
+        if text is None:
+            text = self.search_bar.text()
         self.proxy_model.set_search_text(text)
 
     def logout(self):
@@ -1227,13 +1341,15 @@ class TablePanel(QMainWindow):
         is_numeric = logical_index in NUMERIC_COLUMNS.get(table_name, [])
         is_date = logical_index in DATE_COLUMNS.get(table_name, [])
         sort_order = Qt.AscendingOrder if ascending else Qt.DescendingOrder
+        
         if is_numeric: 
-            self.proxy_model.setSortRole(Qt.EditRole)
+            self.proxy_model.setSortRole(Qt.DisplayRole)
         elif is_date: 
-            self.proxy_model.setSortRole(Qt.UserRole)
+            self.proxy_model.setSortRole(Qt.DisplayRole)
         else: 
             self.proxy_model.setSortCaseSensitivity(Qt.CaseInsensitive)
             self.proxy_model.setSortRole(Qt.DisplayRole)
+            
         self.proxy_model.sort(logical_index, sort_order)
         if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
             header = self.data_table.horizontalHeader()
@@ -1244,15 +1360,32 @@ class TablePanel(QMainWindow):
         self.proxy_model.sort(-1, Qt.AscendingOrder)
 
     def _adjust_column_widths(self):
+        """Адаптивное растягивание колонок"""
         header = self.data_table.horizontalHeader()
         if not header or header.count() == 0: 
             return
+        
+        table_name = TABLES.get(self.table_selector.currentText(), "")
+        
+        # Сначала подгоняем по содержимому
         for i in range(header.count()):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        
+        # Вычисляем общую ширину
         total_width = sum(header.sectionSize(i) for i in range(header.count()))
         viewport_width = self.data_table.viewport().width()
+        
+        # Если есть свободное место, растягиваем последнюю колонку
         if total_width < viewport_width:
             header.setSectionResizeMode(header.count() - 1, QHeaderView.ResizeMode.Stretch)
+        else:
+            # Если не влезает, растягиваем последнюю видимую колонку
+            last_visible = header.count() - 1
+            for i in range(header.count() - 1, -1, -1):
+                if not header.isSectionHidden(i):
+                    last_visible = i
+                    break
+            header.setSectionResizeMode(last_visible, QHeaderView.ResizeMode.Stretch)
 
     def open_add_form(self):
         selected_table = TABLES[self.table_selector.currentText()]
@@ -1371,6 +1504,9 @@ class TablePanel(QMainWindow):
             headers = HEADERS[table_name]
             model = QStandardItemModel(len(rows), len(headers))
             model.setHorizontalHeaderLabels(headers)
+            
+            center_cols = CENTER_ALIGNED_COLUMNS.get(table_name, [])
+            
             for row_idx, row in enumerate(rows):
                 row_values = list(row.values())
                 for col_idx in range(len(headers)):
@@ -1396,18 +1532,26 @@ class TablePanel(QMainWindow):
                     item.setText(display_text)
                     item.setData(display_text, Qt.ItemDataRole.DisplayRole)
                     item.setData(display_text, Qt.ItemDataRole.EditRole)
-                    if isinstance(value, (int, float)): 
+                    
+                    # Выравнивание
+                    if col_idx in center_cols:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                     else:
                         item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    
                     model.setItem(row_idx, col_idx, item)
-            self._adjust_column_widths()
+            
             self.proxy_model.setSourceModel(model)
             self.data_table.setModel(self.proxy_model)
+            
             if isinstance(self.data_table.horizontalHeader(), SortableHeaderView):
                 header = self.data_table.horizontalHeader()
                 header.sort_column = -1
                 header.sort_ascending = True
+            
+            # Применяем адаптивную ширину колонок
+            QTimer.singleShot(100, self._adjust_column_widths)
+            
             self.search_bar.clear()
             self.proxy_model.set_search_text("")
             self.reset_sort()
@@ -1420,3 +1564,19 @@ class TablePanel(QMainWindow):
             error_model.setItem(0, 0, QStandardItem(str(e)))
             self.proxy_model.setSourceModel(error_model)
             self.data_table.setModel(self.proxy_model)
+
+
+# Для запуска из консоли
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    # Тестовые данные пользователя
+    test_user = {
+        'id': 1,
+        'full_name': 'Александр Петров',
+        'role': 'admin'
+    }
+    
+    window = TablePanel(test_user)
+    window.show()
+    sys.exit(app.exec())

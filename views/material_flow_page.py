@@ -514,11 +514,13 @@ class MaterialFlowPage(QMainWindow):
                 self.incoming_material.addItem(display_text, mat_id)
                 self.outgoing_material.addItem(display_text, mat_id)
             
+            # ИСПРАВЛЕНО: получаем названия поставщиков через JOIN
             suppliers_query = """
-                SELECT DISTINCT supplier
-                FROM materials
-                WHERE supplier IS NOT NULL AND supplier != ''
-                ORDER BY supplier
+                SELECT DISTINCT s.name
+                FROM suppliers s
+                INNER JOIN materials m ON s.id = m.supplier_id
+                WHERE s.name IS NOT NULL AND s.name != ''
+                ORDER BY s.name
             """
             cursor = conn.cursor()
             cursor.execute(suppliers_query)
@@ -594,11 +596,13 @@ class MaterialFlowPage(QMainWindow):
 
     def refresh_materials_info(self):
         try:
+            # ИСПРАВЛЕНО: JOIN с таблицей suppliers для получения названия
             query = """
                 SELECT m.id, m.name, c.name as category_name, m.quantity, m.unit, 
-                       m.min_quantity, m.price, m.supplier
+                       m.min_quantity, m.price, s.name as supplier
                 FROM materials m
                 LEFT JOIN categories c ON m.category_id = c.id
+                LEFT JOIN suppliers s ON m.supplier_id = s.id
                 ORDER BY m.name
             """
             conn = self.db.get_connection()
@@ -676,7 +680,7 @@ class MaterialFlowPage(QMainWindow):
                 return
             mat_id = self.incoming_material.itemData(idx)
             qty_str = self.incoming_quantity.text().strip()
-            supplier = self.incoming_supplier.currentText().strip()
+            supplier_name = self.incoming_supplier.currentText().strip()
             doc_num = self.incoming_doc_number.text().strip()
             doc_date = self.incoming_doc_date.date().toPython()
             notes = self.incoming_notes.toPlainText().strip()
